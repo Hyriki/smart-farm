@@ -1,36 +1,121 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Yolo Farm
+
+A modern full-stack web application built with [Next.js](https://nextjs.org), [Prisma ORM](https://www.prisma.io), and [PostgreSQL](https://www.postgresql.org).
+
+## Overview
+
+This project is a production-ready application featuring:
+
+- **Next.js 16** – Modern React framework with server-side rendering and API routes
+- **Prisma ORM** – Type-safe database access and migrations
+- **PostgreSQL Database** – Hosted on [Supabase](https://supabase.com)
+- **Docker & Docker Compose** – Containerized deployment for consistency across environments
+- **TypeScript** – End-to-end type safety
+
+## Prerequisites
+
+- [Docker](https://www.docker.com/products/docker-desktop) and Docker Compose
+- [Node.js](https://nodejs.org) 20+ (for local development)
 
 ## Getting Started
 
-First, run the development server:
+### Using Docker (Recommended)
+
+The easiest way to run the application with all dependencies is using Docker Compose:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+docker-compose up --build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+This will:
+1. Build the Docker image from the Dockerfile
+2. Start the application container
+3. Expose the application on [http://localhost:3000](http://localhost:3000)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+**Note:** Ensure you have a `.env` file with your Supabase connection string:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```env
+DATABASE_URL=postgresql://[user]:[password]@[host]:[port]/[database]
+```
 
-## Learn More
+### Local Development
 
-To learn more about Next.js, take a look at the following resources:
+For development without Docker:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm install
+npm run dev
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The application will start on [http://localhost:3000](http://localhost:3000) and hot-reload as you make changes.
 
-## Deploy on Vercel
+## Project Structure
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+src/
+├── app/          # Next.js pages and layouts
+├── lib/          # Utilities and shared functions
+├── db/           # Database repositories
+└── generated/    # Auto-generated Prisma client
+prisma/
+├── schema.prisma # Database schema
+└── migrations/   # Database migrations
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Key Commands
+
+```bash
+# Development
+npm run dev       # Start development server
+npm run build     # Build for production
+npm start         # Start production server
+npm run lint      # Run ESLint
+
+# Database
+npx prisma studio  # Open Prisma Studio UI
+npx prisma migrate # Run pending migrations
+
+# Docker
+docker-compose up --build      # Build and start containers
+docker-compose up              # Start with cached image
+docker-compose down            # Stop and remove containers
+docker-compose logs -f         # View application logs
+```
+
+## Database
+
+This project uses PostgreSQL hosted on [Supabase](https://supabase.com). Database operations are managed with [Prisma ORM](https://www.prisma.io).
+
+To update the schema:
+
+1. Modify `prisma/schema.prisma`
+2. Create and apply migrations:
+   ```bash
+   npx prisma migrate dev --create-only
+   npx prisma migrate deploy
+   ```
+
+## Deployment
+
+Docker is configured for production deployment. Build and push the image to your container registry:
+
+```bash
+docker build -t your-registry/yolo-farm:latest .
+docker push your-registry/yolo-farm:latest
+```
+
+For deployment on Docker containers or Kubernetes, ensure the following environment variables are set:
+
+- `DATABASE_URL` – PostgreSQL connection string
+- `NODE_ENV=production`
+
+## Documentation
+
+- [Next.js Documentation](https://nextjs.org/docs)
+- [Prisma Documentation](https://www.prisma.io/docs)
+- [Supabase Documentation](https://supabase.com/docs)
+- [Docker Documentation](https://docs.docker.com)
+
+## License
+
+Proprietary – All rights reserved.
