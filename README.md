@@ -297,3 +297,7 @@ For deployment on Docker containers or Kubernetes, ensure the following environm
 - [Prisma Documentation](https://www.prisma.io/docs)
 - [Supabase Documentation](https://supabase.com/docs)
 - [Docker Documentation](https://docs.docker.com)
+
+## License
+
+Proprietary – All rights reserved.
