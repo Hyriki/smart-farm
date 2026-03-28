@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  # Next.js Application
+  app:
+    build: .
+    container_name: yolo-farm-app
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    restart: unless-stopped

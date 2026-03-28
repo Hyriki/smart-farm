@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+.nyc_output/
+
+# Next.js
+.next/
+out/
+build/
+
+# Misc
+.DS_Store
+*.pem
+*.log
+.env
+.env.local
+.env.*.local
+
+# System
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+.git/
+.gitignore
+.github/
+
+# Project specific
+.eslintignore
+.prettierrc
+README.md
+AGENTS.md
+CLAUDE.md
+
+# IDE
+.vscode
+.idea
+*.sublime-project
+*.sublime-workspace
