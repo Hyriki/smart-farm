@@ -1,0 +1,27 @@
+import bcrypt from 'bcryptjs';
+import { HashedPassword, VerifiedEmail } from '@/types';
+import jwt from 'jsonwebtoken';
+
+export async function hashPassword(password: string): Promise<HashedPassword> {
+  const saltRounds = 10;
+  const hashedPassword = await bcrypt.hash(password, saltRounds);
+  return hashedPassword as HashedPassword;
+}
+
+export async function verifyPassword(password: string, hashedPassword: HashedPassword): Promise<boolean> {
+  return await bcrypt.compare(password, hashedPassword);
+}
+
+const JWT_SECRET = process.env.JWT_SECRET || 'default_secret';
+
+export function generateToken(userId: number, email: VerifiedEmail, role: string): string {
+    return jwt.sign({ userId, email, role }, JWT_SECRET, { expiresIn: '1h' });
+}
+
+export function verifyToken(token: string) {
+    try {
+        return jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+        return null;
+    }
+}
