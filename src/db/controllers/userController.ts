@@ -23,10 +23,10 @@ export async function verifyCredentials(email: string, password: string): Promis
     if (!user.isVerified) {
         throw new Error("Email not verified");
     }
-    // const isValid = await verifyPassword(password, user.password as HashedPassword);
-    // if (!isValid) {
-    //     throw new Error("Invalid credentials");
-    // }
+    const isValid = await verifyPassword(password, user.password as HashedPassword);
+    if (!isValid) {
+        throw new Error("Invalid credentials");
+    }
     return user as ResponseUser;
 }
 
