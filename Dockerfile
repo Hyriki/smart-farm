@@ -17,6 +17,9 @@ RUN npx prisma generate
 
 COPY . .
 
+# Add MQTT client to dependencies
+RUN npm install mqtt
+
 RUN npm run build
 
 FROM base AS runner

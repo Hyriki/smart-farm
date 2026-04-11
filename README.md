@@ -169,21 +169,38 @@ MQTT_PORT=1883
 
 ### Using Docker (Recommended)
 
-The easiest way to run the application with all dependencies is using Docker Compose:
+The easiest way to run the complete MQTT system with all services is using Docker Compose:
+
+#### Start All Services
 
 ```bash
 docker-compose up --build
 ```
 
-This will:
-1. Build the Docker image from the Dockerfile
-2. Start the application container
-3. Expose the application on [http://localhost:3000](http://localhost:3000)
+This will start:
+1. **MQTT Broker** (Mosquitto) on port 1883
+2. **Python Gateway** (connects to Adafruit IO)
+3. **Next.js Backend** on [http://localhost:3000](http://localhost:3000)
 
-**Note:** Ensure you have a `.env` file with your Supabase connection string:
+#### Verify Services
 
-```env
-DATABASE_URL=postgresql://[user]:[password]@[host]:[port]/[database]
+```bash
+# Check all containers
+docker-compose ps
+
+# View logs
+docker-compose logs -f
+
+# View specific service logs
+docker-compose logs -f app        # Backend
+docker-compose logs -f mqtt       # MQTT Broker
+docker-compose logs -f gateway    # Python Gateway
+```
+
+#### Stop Services
+
+```bash
+docker-compose down
 ```
 
 ### Local Development
@@ -229,13 +246,22 @@ npm run lint      # Run ESLint
 
 # Database
 npx prisma studio  # Open Prisma Studio UI
-npx prisma migrate # Run pending migrations
+npx prisma migrate dev --name migration_name  # Create migration
+npx prisma migrate deploy  # Deploy migrations
 
-# Docker
-docker-compose up --build      # Build and start containers
-docker-compose up              # Start with cached image
+# Docker (Complete System)
+docker-compose up --build      # Build & start all services (MQTT, Gateway, Backend)
+docker-compose up              # Start with cached images
 docker-compose down            # Stop and remove containers
-docker-compose logs -f         # View application logs
+docker-compose ps              # Show running containers
+docker-compose logs -f         # View all logs
+docker-compose logs -f app     # View backend logs
+docker-compose logs -f mqtt    # View MQTT broker logs
+docker-compose logs -f gateway # View Python gateway logs
+
+# MQTT Testing
+mosquitto_sub -h localhost -p 1883 -t "yolofarm/#"  # Subscribe to all topics
+mosquitto_pub -h localhost -p 1883 -t "test" -m "hello"  # Publish test message
 ```
 
 ## Database
