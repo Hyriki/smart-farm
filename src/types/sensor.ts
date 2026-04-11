@@ -11,10 +11,10 @@ export type UpdateSensorInput = {
 };
 
 export type CreateTelemetryInput = {
-  soilMoisture?: number;
-  humidity?: number;
-  lightIntensity?: number;
-  ambientTemperature?: number;
+  soilMoisture?: number | null;
+  humidity?: number | null;
+  lightIntensity?: number | null;
+  ambientTemperature?: number | null;
   properties?: Record<string, unknown> | null;
   timestamp?: string;
 };

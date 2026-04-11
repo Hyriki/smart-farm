@@ -19,6 +19,154 @@ This project is a production-ready application featuring:
 
 ## Getting Started
 
+### Running the Complete MQTT System
+
+This project integrates IoT sensors via MQTT. Here's how to set up and run the entire system:
+
+#### Prerequisites for MQTT
+
+- ESP32 with code uploaded (see `firmware/esp32_sensor.ino`)
+- MQTT Broker running (Mosquitto)
+- Python 3.11+ with pip
+
+#### Step 1: Start MQTT Broker
+
+**Using Docker:**
+```bash
+docker run -d -p 1883:1883 --name mosquitto eclipse-mosquitto
+```
+
+**Or with Homebrew (macOS):**
+```bash
+brew install mosquitto
+mosquitto -d -p 1883
+```
+
+#### Step 2: Upload Code to ESP32
+
+1. Open Arduino IDE
+2. Load `firmware/esp32_sensor.ino`
+3. **Configure credentials in code:**
+   - `WIFI_SSID` → Your WiFi network name
+   - `WIFI_PASSWORD` → Your WiFi password
+   - `MQTT_BROKER` → Your MQTT broker IP (e.g., local network IP)
+4. Install libraries: PubSubClient, DHT sensor library, BH1750
+5. Select **Board** → ESP32 Dev Module
+6. Select **Port** → Your ESP32's COM port
+7. Click **Upload**
+8. Verify in Serial Monitor that ESP32 connects to WiFi & MQTT
+
+#### Step 3: Run Python Gateway (Optional)
+
+For remote monitoring via Adafruit IO:
+
+```bash
+cd gateway/
+pip3 install paho-mqtt adafruit-io python-dotenv
+```
+
+Create `gateway/.env`:
+```env
+AIO_USERNAME=[your-adafruit-username]
+AIO_KEY=[your-adafruit-api-key]
+MQTT_BROKER=[your-mqtt-broker-ip]
+MQTT_PORT=1883
+```
+
+**Update `gateway/mqtt_bridge.py`** to read from `.env`:
+```python
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+AIO_USERNAME = os.getenv('AIO_USERNAME')
+AIO_KEY = os.getenv('AIO_KEY')
+MQTT_BROKER = os.getenv('MQTT_BROKER', '192.168.1.95')
+MQTT_PORT = int(os.getenv('MQTT_PORT', '1883'))
+```
+
+Then run:
+```bash
+python3 mqtt_bridge.py
+```
+
+#### Step 4: Run Backend Server
+
+```bash
+npm install mqtt
+npm run dev
+```
+
+Check logs for:
+```
+✓ MQTT connected
+✓ Subscribed to yolofarm/sensor/all
+```
+
+#### Step 5: Test the System
+
+**Test Buzzer Control:**
+```bash
+curl -X POST http://localhost:3000/api/control/buzzer \
+  -H "Content-Type: application/json" \
+  -d '{"command": "AUTO"}'
+```
+
+**Test Heater Control:**
+```bash
+curl -X POST http://localhost:3000/api/control/heater \
+  -H "Content-Type: application/json" \
+  -d '{"command": "ON"}'
+```
+
+**View Sensor Data in Database:**
+```bash
+npx prisma studio
+```
+
+#### System Architecture
+
+```
+ESP32 Sensor
+    ↓ MQTT Publish (yolofarm/sensor/all)
+MQTT Broker (MQTT_BROKER_IP:MQTT_PORT)
+    ├─→ Backend Node.js (Save to DB)
+    ├─→ Python Gateway (Bridge to Adafruit IO)
+    └─→ Dashboard UI (Real-time display)
+```
+
+#### Environment Variables
+
+**Backend (.env.local):**
+```env
+# MQTT Configuration
+MQTT_BROKER_URL=mqtt://[your-mqtt-broker-ip]:1883
+
+# Database Configuration
+DATABASE_URL=postgresql://[user]:[password]@[host]/[database]
+```
+
+**Gateway (gateway/.env):**
+```env
+# Adafruit IO Configuration
+AIO_USERNAME=[your-adafruit-username]
+AIO_KEY=[your-adafruit-api-key]
+
+# MQTT Broker Configuration
+MQTT_BROKER=[your-mqtt-broker-ip]
+MQTT_PORT=1883
+```
+
+#### Troubleshooting MQTT
+
+| Issue | Solution |
+|-------|----------|
+| Port 1883 already in use | `docker stop mosquitto` or use different port |
+| ESP32 won't connect to WiFi | Check SSID/password in `firmware/esp32_sensor.ino` |
+| MQTT broker not found | Verify MQTT_BROKER_URL is correct in `.env.local` |
+| Python SSL error | Run: `python3 -m pip install --upgrade certifi` |
+
 ### Using Docker (Recommended)
 
 The easiest way to run the application with all dependencies is using Docker Compose:
@@ -52,14 +200,22 @@ The application will start on [http://localhost:3000](http://localhost:3000) and
 ## Project Structure
 
 ```
+firmware/
+├── esp32_sensor.ino          # ESP32 sensor code (Arduino)
+gateway/
+├── mqtt_bridge.py            # Python gateway for Adafruit IO
 src/
-├── app/          # Next.js pages and layouts
-├── lib/          # Utilities and shared functions
-├── db/           # Database repositories
-└── generated/    # Auto-generated Prisma client
+├── app/                      # Next.js pages and layouts
+├── lib/
+│   └── mqtt/                 # MQTT integration
+│       ├── client.ts         # MQTT connection client
+│       ├── init.ts           # MQTT initialization
+│       └── sensorDataHandler.ts  # Sensor data processing
+├── db/                       # Database repositories
+└── generated/                # Auto-generated Prisma client
 prisma/
-├── schema.prisma # Database schema
-└── migrations/   # Database migrations
+├── schema.prisma             # Database schema
+└── migrations/               # Database migrations
 ```
 
 ## Key Commands
