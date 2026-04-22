@@ -1,0 +1,23 @@
+# Python Gateway Dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app/gateway
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements (if you have one) or install directly
+COPY gateway/requirements.txt* ./
+RUN if [ -f requirements.txt ]; then pip install -r requirements.txt; fi \
+    && pip install paho-mqtt adafruit-io python-dotenv
+
+# Copy gateway code
+COPY gateway/mqtt_bridge.py ./
+
+# Copy .env file (will be mounted or passed at runtime)
+COPY gateway/.env* ./
+
+# Run the gateway
+CMD ["python3", "mqtt_bridge.py"]
