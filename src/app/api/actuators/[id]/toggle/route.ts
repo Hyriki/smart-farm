@@ -10,7 +10,7 @@ async function parseId(params: Promise<{ id: string }>) {
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = requireAuth(request);
-    requireRole(user.role, ['admin', 'operator']);
+    requireRole(user.role, ['admin', 'viewer']);
 
     const actuatorId = await parseId(context.params);
     if (Number.isNaN(actuatorId)) return badRequest('Invalid actuator id');

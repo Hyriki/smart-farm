@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(request: NextRequest) {
   try {
+    // Get sensor telemetry history
     return NextResponse.json(
-      { message: 'Dashboard API' },
+      { message: 'Sensor readings history' },
       { status: 200 }
     );
   } catch (error) {
     return NextResponse.json(
-      { error: 'Internal Server Error' },
+      { error: 'Failed to fetch history' },
       { status: 500 }
     );
   }

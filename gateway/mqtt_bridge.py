@@ -12,7 +12,7 @@ ssl._create_default_https_context = ssl._create_unverified_context
 import urllib3
 urllib3.disable_warnings()
 
-load_dotenv('../.env')
+load_dotenv()
 AIO_USERNAME = os.getenv("AIO_USERNAME")
 AIO_KEY = os.getenv("AIO_KEY")
 

@@ -26,6 +26,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/mqtt": "^0.0.34",
     "@types/node": "^20",
+    "@types/nodemailer": "^6.4.23",
     "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",

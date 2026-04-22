@@ -17,7 +17,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const user = requireAuth(request);
-    requireRole(user.role, ['admin', 'operator']);
+    requireRole(user.role, ['admin', 'viewer']);
 
     const body = await request.json();
     if (!body.type) return badRequest('Sensor type is required');

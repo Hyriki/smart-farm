@@ -84,7 +84,7 @@ export async function createTelemetry(sensorId: number, data: CreateTelemetryInp
       humidity: data.humidity,
       lightIntensity: data.lightIntensity,
       ambientTemperature: data.ambientTemperature,
-      properties: data.properties ?? undefined,
+      properties: data.properties ? JSON.stringify(data.properties) : undefined,
       timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
     },
   });
