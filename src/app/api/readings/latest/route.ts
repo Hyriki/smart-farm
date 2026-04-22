@@ -1,16 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { getLatestTelemetryPerSensorController } from '@/db/controllers/telemetryController';
+import { requireAuth } from '@/lib/auth';
+import { ok, serverError, unauthorized } from '@/lib/api';
 
-export async function GET(request: NextRequest) {
+export async function GET(request: Request) {
   try {
-    // Get latest sensor readings
-    return NextResponse.json(
-      { message: 'Latest sensor readings' },
-      { status: 200 }
-    );
+    requireAuth(request);
+    const readings = await getLatestTelemetryPerSensorController();
+    return ok({ message: 'Latest readings fetched successfully', readings });
   } catch (error) {
-    return NextResponse.json(
-      { error: 'Failed to fetch latest readings' },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    if (message.includes('token')) return unauthorized(message);
+    return serverError(error);
   }
 }

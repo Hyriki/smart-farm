@@ -28,3 +28,28 @@ export type UpdateActuatorInput = {
   role?: string;
   currentState?: string;
 };
+
+export type CreateFrameInput = {
+  sensorId: number;
+  attribute?: Record<string, unknown> | null;
+  timestamp?: string;
+};
+
+export type UpdateFrameInput = {
+  attribute?: Record<string, unknown> | null;
+};
+
+export type CreateAlertInput = {
+  type: string;
+  severity: string;
+};
+
+export type UpdateAlertInput = {
+  type?: string;
+  severity?: string;
+};
+
+export type CreateAlertTriggerInput = {
+  alertId: number;
+  detectionId: number;
+};

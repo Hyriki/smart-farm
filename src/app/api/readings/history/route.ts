@@ -1,16 +1,30 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { getTelemetryHistoryController } from '@/db/controllers/telemetryController';
+import { requireAuth } from '@/lib/auth';
+import { ok, serverError, unauthorized } from '@/lib/api';
 
-export async function GET(request: NextRequest) {
+export async function GET(request: Request) {
   try {
-    // Get sensor telemetry history
-    return NextResponse.json(
-      { message: 'Sensor readings history' },
-      { status: 200 }
-    );
+    requireAuth(request);
+
+    const { searchParams } = new URL(request.url);
+    const sensorId = searchParams.get('sensorId');
+    const from = searchParams.get('from');
+    const to = searchParams.get('to');
+    const limit = searchParams.get('limit');
+    const offset = searchParams.get('offset');
+
+    const result = await getTelemetryHistoryController({
+      sensorId: sensorId ? Number(sensorId) : undefined,
+      from: from ?? undefined,
+      to: to ?? undefined,
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+    });
+
+    return ok({ message: 'Telemetry history fetched successfully', ...result });
   } catch (error) {
-    return NextResponse.json(
-      { error: 'Failed to fetch history' },
-      { status: 500 }
-    );
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    if (message.includes('token')) return unauthorized(message);
+    return serverError(error);
   }
 }

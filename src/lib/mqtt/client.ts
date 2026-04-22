@@ -37,7 +37,7 @@ export async function initMqttClient() {
     return null;
   }
 
-  const brokerUrl = process.env.MQTT_BROKER_URL;
+  const brokerUrl = process.env.MQTT_BROKER_URL ?? 'mqtt://localhost:1883';
   
   client = mqtt.connect(brokerUrl);
 
