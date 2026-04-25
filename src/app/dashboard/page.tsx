@@ -19,19 +19,52 @@ import { useMqtt } from "@/lib/mqtt/useMqtt";
 import { SensorCard, ActuatorControl } from "@/components/dashboard/DashboardComponents";
 
 export default function Dashboard() {
-  const { isConnected, lastData, publish } = useMqtt();
+  const { isConnected, lastData, setLastData } = useMqtt();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [controlLoading, setControlLoading] = useState<Record<string, boolean>>({});
+
+  // Fetch initial state from database
+  useEffect(() => {
+    const fetchInitialState = async () => {
+      try {
+        const res = await fetch('/api/telemetries/latest');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.telemetry) {
+            setLastData({
+              temperature: data.telemetry.ambientTemperature,
+              humidity: data.telemetry.humidity,
+              light: data.telemetry.lightIntensity,
+              soil_moisture: data.telemetry.soilMoisture,
+              buzzer: data.telemetry.properties?.buzzer || 'OFF',
+              mode: data.telemetry.properties?.buzzerMode || 'OFF',
+              heater: data.telemetry.properties?.heater || 'OFF',
+              timestamp: new Date(data.telemetry.timestamp).toLocaleTimeString(),
+            });
+          }
+        }
+      } catch (err) {
+        console.error('[Dashboard] Failed to fetch initial state:', err);
+      }
+    };
+
+    fetchInitialState();
+  }, [setLastData]);
 
   const handleControl = async (actuator: 'buzzer' | 'heater', currentMode: string) => {
     setControlLoading(prev => ({ ...prev, [actuator]: true }));
     
     let command = '';
     if (actuator === 'buzzer') {
+      // Toggle between AUTO and OFF
       command = currentMode === 'AUTO' ? 'OFF' : 'AUTO';
     } else {
+      // Toggle between ON and OFF
       command = currentMode === 'ON' ? 'OFF' : 'ON';
     }
+
+    // Optimization: If already in that state (rare but possible), skip
+    if (command === currentMode) return;
 
     try {
       const res = await fetch(`/api/control/${actuator}`, {
@@ -141,8 +174,8 @@ export default function Dashboard() {
               </h2>
               <div className="space-y-4">
                 <ActuatorControl 
-                  title="Buzzer Alert"
-                  status={lastData?.mode || 'OFF'}
+                  title="Buzzer System"
+                  status={lastData?.mode === 'AUTO' ? `AUTO (${lastData?.buzzer || 'OFF'})` : 'MANUAL OFF'}
                   icon={Volume2}
                   color="bg-yellow-500"
                   onToggle={() => handleControl('buzzer', lastData?.mode || 'OFF')}

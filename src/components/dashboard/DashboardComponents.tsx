@@ -80,7 +80,7 @@ export function ActuatorControl({
   isLoading,
   color 
 }: ControlProps) {
-  const isActive = status === 'ON' || status === 'AUTO';
+  const isActive = status.includes('ON') || status.includes('AUTO');
   
   return (
     <div className="flex items-center justify-between rounded-3xl bg-white/5 p-4 border border-white/10">

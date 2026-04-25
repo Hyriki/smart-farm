@@ -76,5 +76,5 @@ export function useMqtt() {
     }
   }, [client, isConnected]);
 
-  return { isConnected, lastData, publish };
+  return { isConnected, lastData, publish, setLastData };
 }
