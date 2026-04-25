@@ -83,6 +83,14 @@ export function onMqttMessage(topic: string, callback: (data: any) => void) {
 }
 
 export async function publishMqtt(topic: string, data: any) {
+  const mockMode = process.env.MQTT_MOCK_MODE === 'true';
+
+  if (mockMode) {
+    console.log(`🎭 [Mock Publish] To ${topic}:`, data);
+    // Simulate a slight delay to mimic network latency
+    return new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
   if (!client?.connected) {
     console.warn('MQTT not connected');
     return;
