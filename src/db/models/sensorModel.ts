@@ -79,12 +79,12 @@ export async function deleteSensor(id: number) {
 export async function createTelemetry(sensorId: number, data: CreateTelemetryInput) {
   return prisma.telemetry.create({
     data: {
-      sensorId,
-      soilMoisture: data.soilMoisture,
-      humidity: data.humidity,
-      lightIntensity: data.lightIntensity,
-      ambientTemperature: data.ambientTemperature,
-      properties: data.properties ? JSON.stringify(data.properties) : undefined,
+      sensorId: sensorId,
+      soilMoisture: data.soilMoisture as number | null,
+      humidity: data.humidity as number | null,
+      lightIntensity: data.lightIntensity as number | null,
+      ambientTemperature: data.ambientTemperature as number | null,
+      properties: (data.properties as any) || undefined,
       timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
     },
   });

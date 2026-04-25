@@ -31,14 +31,24 @@ export default function Dashboard() {
         if (res.ok) {
           const data = await res.json();
           if (data.telemetry) {
+            // Robust parsing for properties (handles both object and stringified JSON)
+            let props = data.telemetry.properties;
+            if (typeof props === 'string') {
+              try {
+                props = JSON.parse(props);
+              } catch (e) {
+                console.error('[Dashboard] Failed to parse telemetry properties:', e);
+              }
+            }
+
             setLastData({
               temperature: data.telemetry.ambientTemperature,
               humidity: data.telemetry.humidity,
               light: data.telemetry.lightIntensity,
               soil_moisture: data.telemetry.soilMoisture,
-              buzzer: data.telemetry.properties?.buzzer || 'OFF',
-              mode: data.telemetry.properties?.buzzerMode || 'OFF',
-              heater: data.telemetry.properties?.heater || 'OFF',
+              buzzer: props?.buzzer || 'OFF',
+              mode: props?.buzzerMode || 'OFF',
+              heater: props?.heater || 'OFF',
               timestamp: new Date(data.telemetry.timestamp).toLocaleTimeString(),
             });
           }

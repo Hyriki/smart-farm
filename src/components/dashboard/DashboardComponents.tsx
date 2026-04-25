@@ -65,7 +65,7 @@ export function SensorCard({
 
 interface ControlProps {
   title: string;
-  status: 'ON' | 'OFF' | 'AUTO';
+  status: string;
   icon: LucideIcon;
   onToggle: () => void;
   isLoading?: boolean;
