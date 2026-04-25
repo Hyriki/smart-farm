@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { ResponseUser, UnverifiedEmail } from "@/types";
 import { verifyEmail } from "@/db/controllers/userController";
 
@@ -9,6 +10,16 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [email, setEmail] = useState("");
+  const router = useRouter();
+
+  useEffect(() => {
+    if (success) {
+      const timer = setTimeout(() => {
+        router.push("/dashboard");
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [success, router]);
   
 
   const handleCreateUser = async (formData: FormData) => {

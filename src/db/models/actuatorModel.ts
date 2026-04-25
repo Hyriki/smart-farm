@@ -91,3 +91,27 @@ export async function toggleActuator(id: number, userId: number, nextState?: str
     },
   });
 }
+export async function updateActuatorByRole(role: string, state: string, userId?: number) {
+  const actuator = await prisma.actuator.findFirst({
+    where: { role },
+  });
+
+  if (!actuator) {
+    // Create it if it doesn't exist
+    return prisma.actuator.create({
+      data: {
+        role,
+        currentState: state,
+        toggledById: userId,
+      },
+    });
+  }
+
+  return prisma.actuator.update({
+    where: { id: actuator.id },
+    data: {
+      currentState: state,
+      toggledById: userId,
+    },
+  });
+}

@@ -1,4 +1,6 @@
 import { publishMqtt } from '@/lib/mqtt/client';
+import { updateActuatorByRole } from '@/db/models/actuatorModel';
+import { requireAuth } from '@/lib/auth';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
@@ -13,9 +15,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Authenticate user
+    let userId: number | undefined;
+    try {
+      const user = requireAuth(request);
+      userId = user.userId;
+    } catch (e) {
+      console.warn('[BuzzerAPI] Unauthenticated request, proceeding without userId');
+    }
+
     console.log(`[BuzzerAPI] Sending command: ${command}`);
 
-    // Publish tới ESP32 qua MQTT
+    // 1. Update Database State
+    await updateActuatorByRole('buzzer', command, userId);
+
+    // 2. Publish to ESP32 via MQTT
     await publishMqtt('yolofarm/control/buzzer', command);
 
     return NextResponse.json(
