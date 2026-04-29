@@ -74,7 +74,10 @@ export default function Dashboard() {
     }
 
     // Optimization: If already in that state (rare but possible), skip
-    if (command === currentMode) return;
+    if (command === currentMode) {
+      setControlLoading(prev => ({ ...prev, [actuator]: false }));
+      return;
+    }
 
     try {
       const res = await fetch(`/api/control/${actuator}`, {
@@ -85,10 +88,27 @@ export default function Dashboard() {
       
       if (!res.ok) throw new Error('Failed to send command');
       console.log(`[Dashboard] ${actuator} command sent: ${command}`);
+
+      // Optimistically update local UI state to reflect the new command
+      setLastData(prev => {
+        if (!prev) return prev;
+        if (actuator === 'buzzer') {
+          return {
+            ...prev,
+            mode: command as 'AUTO' | 'OFF',
+            // When switching to OFF, also set buzzer to OFF
+            buzzer: command === 'OFF' ? 'OFF' : prev.buzzer,
+          };
+        } else {
+          return {
+            ...prev,
+            heater: command as 'ON' | 'OFF',
+          };
+        }
+      });
     } catch (err) {
       console.error(`[Dashboard] Control error:`, err);
     } finally {
-      // Simulate network delay for better UX
       setTimeout(() => {
         setControlLoading(prev => ({ ...prev, [actuator]: false }));
       }, 500);
