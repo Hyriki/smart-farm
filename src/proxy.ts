@@ -11,7 +11,7 @@ export function proxy(request: NextRequest) {
     // If no token, redirect to login for protected routes
     if (!token) {
         if (pathname.startsWith("/protected") || pathname.startsWith("/dashboard")) {
-            return NextResponse.redirect(new URL("/", request.url));
+            return NextResponse.redirect(new URL("/login", request.url));
         }
         return NextResponse.next();
     }
@@ -21,7 +21,7 @@ export function proxy(request: NextRequest) {
         
         // Check if token is valid (not null)
         if (!payload) {
-            return NextResponse.redirect(new URL("/", request.url));
+            return NextResponse.redirect(new URL("/login", request.url));
         }
 
         console.log("Decoded token payload:", payload);
