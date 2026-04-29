@@ -1,0 +1,65 @@
+
+services:
+  # MQTT Broker (Mosquitto)
+  mqtt:
+    image: eclipse-mosquitto:latest
+    container_name: yolo-farm-mqtt
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_logs:/mosquitto/log
+    restart: unless-stopped
+    environment:
+      - TZ=UTC
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-h", "localhost", "-t", "test"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Python Gateway (Adafruit IO Bridge)
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    container_name: yolo-farm-gateway
+    depends_on:
+      mqtt:
+        condition: service_healthy
+    environment:
+      AIO_USERNAME: ${AIO_USERNAME}
+      AIO_KEY: ${AIO_KEY}
+      MQTT_BROKER: mqtt
+      MQTT_PORT: 1883
+    restart: unless-stopped
+    env_file:
+      - gateway/.env
+    networks:
+      - mqtt-network
+
+  # Next.js Application
+  app:
+    build: .
+    container_name: yolo-farm-app
+    depends_on:
+      mqtt:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      NODE_ENV: production
+      MQTT_BROKER_URL: mqtt://mqtt:1883
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    networks:
+      - mqtt-network
+
+volumes:
+  mosquitto_data:
+  mosquitto_logs:
+
+networks:
+  mqtt-network:
+    driver: bridge

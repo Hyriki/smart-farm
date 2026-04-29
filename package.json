@@ -1,0 +1,47 @@
+{
+  "name": "yolo-farm",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.5.0",
+    "@prisma/client": "^7.5.0",
+    "@radix-ui/react-slot": "^1.2.4",
+    "bcryptjs": "^3.0.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^1.11.0",
+    "mqtt": "^5.15.1",
+    "next": "16.2.1",
+    "nodemailer": "^8.0.4",
+    "pg": "^8.20.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "recharts": "^3.8.1",
+    "resend": "^6.10.0",
+    "tailwind-merge": "^3.5.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/mqtt": "^0.0.34",
+    "@types/node": "^20",
+    "@types/nodemailer": "^6.4.23",
+    "@types/pg": "^8.20.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "babel-plugin-react-compiler": "1.0.0",
+    "dotenv": "^17.3.1",
+    "eslint": "^10.1.0",
+    "eslint-config-next": "^0.2.4",
+    "prisma": "^7.5.0",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

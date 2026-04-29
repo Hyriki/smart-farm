@@ -1,0 +1,184 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        Int                   @id @default(autoincrement())
+  name      String
+  email     String                @unique
+  isVerified Boolean              @default(false)
+  password  String
+  role      String                @default("viewer")
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+
+  toggledActuators Actuator[]          @relation("UserToggledActuators")
+  viewedSensors    UserSensorView[]
+  viewedDetections UserDetectionView[]
+
+  @@index([role])
+}
+
+model Actuator {
+  id            Int                    @id @default(autoincrement())
+  role          String
+  currentState  String                 @default("OFF")
+  toggledById   Int?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+
+  toggledBy     User?                  @relation("UserToggledActuators", fields: [toggledById], references: [id], onDelete: SetNull)
+  controlledBy  SensorActuatorControl[]
+
+  @@index([role])
+  @@index([currentState])
+  @@index([toggledById])
+}
+
+model Sensor {
+  id         Int                    @id @default(autoincrement())
+  type       String
+  location   String?
+  status     String                 @default("offline")
+  createdAt  DateTime               @default(now())
+  updatedAt  DateTime               @updatedAt
+
+  frames     Frame[]
+  telemetries Telemetry[]
+  viewers    UserSensorView[]
+  actuators  SensorActuatorControl[]
+
+  @@index([type])
+  @@index([status])
+  @@index([location])
+}
+
+model Telemetry {
+  id                 Int       @id @default(autoincrement())
+  sensorId           Int
+  soilMoisture       Float?
+  humidity           Float?
+  lightIntensity     Float?
+  ambientTemperature Float?
+  properties         Json?
+  timestamp          DateTime  @default(now())
+  createdAt          DateTime  @default(now())
+
+  sensor             Sensor    @relation(fields: [sensorId], references: [id], onDelete: Cascade)
+
+  @@index([sensorId])
+  @@index([timestamp])
+  @@index([sensorId, timestamp])
+}
+
+model Frame {
+  id         Int           @id @default(autoincrement())
+  sensorId    Int
+  attribute  Json?
+  timestamp  DateTime      @default(now())
+  createdAt  DateTime      @default(now())
+
+  sensor     Sensor        @relation(fields: [sensorId], references: [id], onDelete: Cascade)
+  detections AiDetection[]
+
+  @@index([sensorId])
+  @@index([timestamp])
+  @@index([sensorId, timestamp])
+}
+
+model AiDetection {
+  id              Int                 @id @default(autoincrement())
+  frameId          Int
+  role            String
+  confidenceScore Float?
+  boundingBox     Json?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  frame           Frame               @relation(fields: [frameId], references: [id], onDelete: Cascade)
+  viewers         UserDetectionView[]
+  alerts          AlertTrigger[]
+
+  @@index([frameId])
+  @@index([role])
+  @@index([confidenceScore])
+}
+
+model Alert {
+  id         Int            @id @default(autoincrement())
+  type       String
+  severity   String
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  detections AlertTrigger[]
+
+  @@index([type])
+  @@index([severity])
+}
+
+model UserSensorView {
+  userId     Int
+  sensorId    Int
+  viewedAt   DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sensor     Sensor   @relation(fields: [sensorId], references: [id], onDelete: Cascade)
+
+  @@id([userId, sensorId])
+  @@index([sensorId])
+  @@index([viewedAt])
+}
+
+model UserDetectionView {
+  userId      Int
+  detectionId Int
+  viewedAt    DateTime    @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  detection   AiDetection @relation(fields: [detectionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, detectionId])
+  @@index([detectionId])
+  @@index([viewedAt])
+}
+
+model SensorActuatorControl {
+  sensorId    Int
+  actuatorId  Int
+  createdAt   DateTime  @default(now())
+
+  sensor      Sensor    @relation(fields: [sensorId], references: [id], onDelete: Cascade)
+  actuator    Actuator  @relation(fields: [actuatorId], references: [id], onDelete: Cascade)
+
+  @@id([sensorId, actuatorId])
+  @@index([actuatorId])
+  @@index([createdAt])
+}
+
+model AlertTrigger {
+  alertId      Int
+  detectionId  Int
+  timestamp    DateTime    @default(now())
+
+  alert        Alert       @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  detection    AiDetection @relation(fields: [detectionId], references: [id], onDelete: Cascade)
+
+  @@id([alertId, detectionId])
+  @@index([detectionId])
+  @@index([timestamp])
+}
+
+
+

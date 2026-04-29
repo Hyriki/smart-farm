@@ -1,0 +1,613 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { TopNav } from "@/components/TopNav";
+import { CircularGauge } from "@/components/CircularGauge";
+import { DataVisualization } from "@/components/DataVisualization";
+import { SystemStatus } from "@/components/SystemStatus";
+import { MessageBox } from "@/components/MessageBox";
+import { Cpu, Wifi, Bell, Activity, Flame } from "lucide-react";
+
+type TrendPoint = {
+  time: string;
+  value: number;
+};
+
+type DashboardStats = {
+  sensors?: number;
+  activeSensors?: number;
+  actuators?: number;
+  devicesOnline?: number;
+  telemetries?: number;
+  alerts?: number;
+  frames?: number;
+};
+
+type ActuatorData = {
+  id: number;
+  role: string;
+  currentState: string;
+};
+
+type DashboardData = {
+  current: {
+    humidity: number | null;
+    temperature: number | null;
+    soilMoisture: number | null;
+    lightIntensity: number | null;
+  };
+  trends: {
+    light: TrendPoint[];
+    temperature: TrendPoint[];
+    moisture: TrendPoint[];
+  };
+  stats: DashboardStats;
+  actuators?: ActuatorData[];
+};
+
+export default function DashboardPage() {
+  // Heater
+  const [heaterActuatorId, setHeaterActuatorId] = useState<number | null>(null);
+  const [heaterState, setHeaterState] = useState<"ON" | "OFF">("OFF");
+
+  // Buzzer: mode (AUTO/OFF) and actual hardware state (ON/OFF)
+  const [buzzerActuatorId, setBuzzerActuatorId] = useState<number | null>(null);
+  const [buzzerMode, setBuzzerMode] = useState<"AUTO" | "OFF">("OFF");
+  const [buzzerRealState, setBuzzerRealState] = useState<"ON" | "OFF">("OFF");
+
+  const [currentHumidity, setCurrentHumidity] = useState<number | null>(null);
+  const [currentTemperature, setCurrentTemperature] = useState<number | null>(null);
+  const [currentSoilMoisture, setCurrentSoilMoisture] = useState<number | null>(null);
+  const [currentLightIntensity, setCurrentLightIntensity] = useState<number | null>(null);
+
+  const [lightTrend, setLightTrend] = useState<TrendPoint[]>([]);
+  const [temperatureTrend, setTemperatureTrend] = useState<TrendPoint[]>([]);
+  const [moistureTrend, setMoistureTrend] = useState<TrendPoint[]>([]);
+
+  const [stats, setStats] = useState<DashboardStats>({});
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadDashboardData() {
+      try {
+        const token =
+          typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+        const response = await fetch("/api/dashboard", {
+          cache: "no-store",
+          credentials: "include",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+
+        if (!response.ok) throw new Error("Failed to fetch dashboard data");
+
+        const data: DashboardData = await response.json();
+
+        setCurrentHumidity(data.current?.humidity ?? null);
+        setCurrentTemperature(data.current?.temperature ?? null);
+        setCurrentSoilMoisture(data.current?.soilMoisture ?? null);
+        setCurrentLightIntensity(data.current?.lightIntensity ?? null);
+
+        setLightTrend(data.trends?.light ?? []);
+        setTemperatureTrend(data.trends?.temperature ?? []);
+        setMoistureTrend(data.trends?.moisture ?? []);
+
+        setStats(data.stats ?? {});
+
+        // Initialize actuator state from API
+        const actuators = data.actuators ?? [];
+
+        const heaterActuator = actuators.find((a) => a.role === "heater");
+        if (heaterActuator) {
+          setHeaterActuatorId(heaterActuator.id);
+          setHeaterState(heaterActuator.currentState === "ON" ? "ON" : "OFF");
+        }
+
+        const buzzerActuator = actuators.find((a) => a.role === "buzzer");
+        if (buzzerActuator) {
+          setBuzzerActuatorId(buzzerActuator.id);
+          setBuzzerMode(buzzerActuator.currentState === "AUTO" ? "AUTO" : "OFF");
+        }
+      } catch (error) {
+        console.error("[LOAD_DASHBOARD_DATA_ERROR]", error);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadDashboardData();
+  }, []);
+
+  return (
+    <div className="min-h-dvh bg-slate-50">
+      <TopNav />
+
+      <main className="pt-16">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+          {/* Page Header */}
+          <div className="mb-8">
+            <h1 className="text-2xl font-bold text-slate-900 mb-1">
+              Dashboard Overview
+            </h1>
+            <p className="text-sm text-slate-500">
+              Monitor your smart farm in real-time
+            </p>
+          </div>
+
+          {/* Quick Stats */}
+          <section aria-label="Quick statistics" className="mb-8">
+            <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">
+              Quick Stats
+            </h2>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <StatCard
+                label="Active Sensors"
+                value={stats.activeSensors ?? stats.sensors ?? null}
+                suffix=""
+                icon={Cpu}
+                iconBg="bg-emerald-500"
+              />
+              <StatCard
+                label="Devices Online"
+                value={stats.devicesOnline ?? stats.actuators ?? null}
+                suffix=""
+                icon={Wifi}
+                iconBg="bg-blue-500"
+              />
+              <StatCard
+                label="Alerts"
+                value={stats.alerts ?? null}
+                suffix=""
+                icon={Bell}
+                iconBg="bg-amber-500"
+              />
+              <StatCard
+                label="Data Points"
+                value={stats.telemetries ?? null}
+                suffix=""
+                icon={Activity}
+                iconBg="bg-violet-500"
+              />
+            </div>
+          </section>
+
+          {/* System Messages */}
+          <section aria-label="System messages" className="mb-8">
+            <MessageBox />
+          </section>
+
+          {/* Environmental Monitoring */}
+          <section aria-label="Environmental monitoring" className="mb-8">
+            <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">
+              Environmental Monitoring
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
+              <CircularGauge
+                title="Humidity"
+                value={currentHumidity ?? 0}
+                unit="%"
+                maxValue={100}
+                color="#10b981"
+              />
+              <CircularGauge
+                title="Temperature"
+                value={currentTemperature ?? 0}
+                unit="°C"
+                maxValue={60}
+                color="#ef4444"
+              />
+              <CircularGauge
+                title="Soil Moisture"
+                value={currentSoilMoisture ?? 0}
+                unit="%"
+                maxValue={100}
+                color="#3b82f6"
+              />
+              <CircularGauge
+                title="Light Intensity"
+                value={currentLightIntensity ?? 0}
+                unit="lux"
+                maxValue={10000}
+                color="#f59e0b"
+              />
+            </div>
+          </section>
+
+          {/* Device Controls */}
+          <section aria-label="Device controls" className="mb-8">
+            <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">
+              Device Controls
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <HeaterCard
+                actuatorId={heaterActuatorId}
+                state={heaterState}
+                onToggle={setHeaterState}
+              />
+
+              {/* Buzzer uses a dedicated card that shows both mode and real state */}
+              <BuzzerCard
+                actuatorId={buzzerActuatorId}
+                mode={buzzerMode}
+                realState={buzzerRealState}
+                onToggle={(newMode, newState) => {
+                  setBuzzerMode(newMode);
+                  setBuzzerRealState(newState);
+                }}
+              />
+            </div>
+          </section>
+
+          {/* Light Intensity Chart */}
+          <section aria-label="Light intensity chart" className="mb-8">
+            {lightTrend.length > 0 ? (
+              <DataVisualization
+                title="Light Intensity"
+                data={lightTrend}
+                dataKey="value"
+                color="#f59e0b"
+                unit=" lux"
+              />
+            ) : (
+              <EmptyChartCard
+                title="Light Intensity"
+                isLoading={isLoading}
+                message="No light intensity data available yet."
+              />
+            )}
+          </section>
+
+          {/* Historical Data Trends */}
+          <section aria-label="Historical data trends" className="mb-8">
+            <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">
+              Historical Trends
+            </h2>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {temperatureTrend.length > 0 ? (
+                <DataVisualization
+                  title="Temperature"
+                  data={temperatureTrend}
+                  dataKey="value"
+                  color="#ef4444"
+                  unit="°C"
+                />
+              ) : (
+                <EmptyChartCard
+                  title="Temperature"
+                  isLoading={isLoading}
+                  message="No temperature history available yet."
+                />
+              )}
+
+              {moistureTrend.length > 0 ? (
+                <DataVisualization
+                  title="Soil Moisture"
+                  data={moistureTrend}
+                  dataKey="value"
+                  color="#3b82f6"
+                  unit="%"
+                />
+              ) : (
+                <EmptyChartCard
+                  title="Soil Moisture"
+                  isLoading={isLoading}
+                  message="No soil moisture history available yet."
+                />
+              )}
+            </div>
+          </section>
+
+          {/* System Status */}
+          <section aria-label="System status" className="mb-8">
+            <SystemStatus />
+          </section>
+
+        </div>
+      </main>
+    </div>
+  );
+}
+
+// ─── Heater Card ──────────────────────────────────────────────────────────────
+
+function HeaterCard({
+  actuatorId,
+  state,
+  onToggle,
+}: {
+  actuatorId: number | null;
+  state: "ON" | "OFF";
+  onToggle: (state: "ON" | "OFF") => void;
+}) {
+  const [isToggling, setIsToggling] = useState(false);
+  const isActive = state === "ON";
+
+  const handleToggle = async () => {
+    if (actuatorId === null || isToggling) return;
+    setIsToggling(true);
+    try {
+      const token =
+        typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+      const res = await fetch(`/api/actuators/${actuatorId}/toggle`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ currentState: state }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.actuator) {
+        onToggle(data.actuator.currentState === "ON" ? "ON" : "OFF");
+      } else {
+        console.error("[HeaterCard] Toggle failed:", data);
+      }
+    } catch (err) {
+      console.error("[HeaterCard] Toggle error:", err);
+    } finally {
+      setIsToggling(false);
+    }
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+      <div className="flex items-center gap-3 mb-6">
+        <div
+          className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${
+            isActive ? "bg-emerald-50" : "bg-slate-100"
+          }`}
+        >
+          <Flame
+            className={`w-5 h-5 transition-colors ${
+              isActive ? "text-emerald-600" : "text-slate-400"
+            }`}
+            aria-hidden="true"
+          />
+        </div>
+        <h3 className="text-base font-semibold text-slate-700">Heater</h3>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <span
+          className={`text-sm font-semibold ${
+            isActive ? "text-emerald-700" : "text-slate-400"
+          }`}
+        >
+          {isActive ? "ON" : "OFF"}
+        </span>
+
+        <button
+          type="button"
+          role="switch"
+          aria-checked={isActive}
+          aria-label={`Heater: currently ${isActive ? "ON" : "OFF"}`}
+          disabled={isToggling || actuatorId === null}
+          onClick={handleToggle}
+          className={`relative inline-flex w-12 h-6 rounded-full transition-colors duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 ${
+            isActive
+              ? "bg-emerald-500 focus-visible:ring-emerald-500"
+              : "bg-slate-300 focus-visible:ring-slate-400"
+          }`}
+        >
+          <span
+            aria-hidden="true"
+            className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200 ${
+              isToggling ? "opacity-60" : ""
+            } ${isActive ? "translate-x-6" : "translate-x-0.5"}`}
+          />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Buzzer Card ───────────────────────────────────────────────────────────────
+// Shows buzzerMode toggle (AUTO ↔ OFF) and the real hardware state when in AUTO.
+
+function BuzzerCard({
+  actuatorId,
+  mode,
+  realState,
+  onToggle,
+}: {
+  actuatorId: number | null;
+  mode: "AUTO" | "OFF";
+  realState: "ON" | "OFF";
+  onToggle: (mode: "AUTO" | "OFF", state: "ON" | "OFF") => void;
+}) {
+  const [isToggling, setIsToggling] = useState(false);
+
+  const handleToggle = async () => {
+    if (actuatorId === null || isToggling) return;
+    setIsToggling(true);
+    try {
+      const token =
+        typeof window !== "undefined" ? localStorage.getItem("token") : null;
+
+      const res = await fetch(`/api/actuators/${actuatorId}/toggle`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({}),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.buzzerMode) {
+        onToggle(data.buzzerMode as "AUTO" | "OFF", data.buzzerState as "ON" | "OFF");
+        if (!data.mqttPublished && data.warning) {
+          console.warn("[BuzzerCard]", data.warning);
+        }
+      } else {
+        console.error("[BuzzerCard] Toggle failed:", data);
+      }
+    } catch (err) {
+      console.error("[BuzzerCard] Toggle error:", err);
+    } finally {
+      setIsToggling(false);
+    }
+  };
+
+  const isActive = mode === "AUTO";
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+      <div className="flex items-center gap-3 mb-6">
+        <div
+          className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${
+            isActive ? "bg-emerald-50" : "bg-slate-100"
+          }`}
+        >
+          <Bell
+            className={`w-5 h-5 transition-colors ${
+              isActive ? "text-emerald-600" : "text-slate-400"
+            }`}
+            aria-hidden="true"
+          />
+        </div>
+        <h3 className="text-base font-semibold text-slate-700">Buzzer</h3>
+      </div>
+
+      <div className="flex items-center justify-between">
+        {/* Left: mode label + real-state badge */}
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className={`text-sm font-semibold ${
+              isActive ? "text-emerald-700" : "text-slate-400"
+            }`}
+          >
+            {mode}
+          </span>
+
+          {mode === "AUTO" && (
+            <span
+              className={`text-xs font-semibold px-2 py-0.5 rounded-full transition-colors ${
+                realState === "ON"
+                  ? "bg-red-100 text-red-700"
+                  : "bg-slate-100 text-slate-500"
+              }`}
+              title={
+                realState === "ON"
+                  ? "Buzzer is currently sounding"
+                  : "Buzzer is currently silent"
+              }
+            >
+              {realState === "ON" ? "ACTIVE" : "SILENT"}
+            </span>
+          )}
+        </div>
+
+        {/* Right: toggle switch */}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={isActive}
+          aria-label={`Buzzer mode: currently ${mode}${mode === "AUTO" ? `, hardware ${realState}` : ""}`}
+          disabled={isToggling || actuatorId === null}
+          onClick={handleToggle}
+          className={`relative inline-flex w-12 h-6 rounded-full transition-colors duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 ${
+            isActive
+              ? "bg-emerald-500 focus-visible:ring-emerald-500"
+              : "bg-slate-300 focus-visible:ring-slate-400"
+          }`}
+        >
+          <span
+            aria-hidden="true"
+            className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200 ${
+              isToggling ? "opacity-60" : ""
+            } ${isActive ? "translate-x-6" : "translate-x-0.5"}`}
+          />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Shared helper components ──────────────────────────────────────────────────
+
+function StatCard({
+  label,
+  value,
+  suffix,
+  icon: Icon,
+  iconBg,
+}: {
+  label: string;
+  value: number | null;
+  suffix: string;
+  icon: React.ElementType;
+  iconBg: string;
+}) {
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow duration-200">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+          {label}
+        </span>
+        <div
+          className={`w-8 h-8 ${iconBg} rounded-lg flex items-center justify-center flex-shrink-0`}
+        >
+          <Icon className="w-4 h-4 text-white" aria-hidden="true" />
+        </div>
+      </div>
+      <p className="text-2xl font-bold text-slate-900 tabular-nums">
+        {value === null ? (
+          <span className="text-slate-300">—</span>
+        ) : (
+          `${value}${suffix}`
+        )}
+      </p>
+    </div>
+  );
+}
+
+function EmptyChartCard({
+  title,
+  message,
+  isLoading,
+}: {
+  title: string;
+  message: string;
+  isLoading: boolean;
+}) {
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+      {title && (
+        <h3 className="text-sm font-semibold text-slate-700 mb-4">{title}</h3>
+      )}
+      <EmptyState isLoading={isLoading} message={message} />
+    </div>
+  );
+}
+
+function EmptyState({
+  message,
+  isLoading,
+}: {
+  message: string;
+  isLoading: boolean;
+}) {
+  return (
+    <div className="min-h-[200px] flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-200">
+      {isLoading ? (
+        <>
+          <div
+            className="w-7 h-7 border-2 border-emerald-200 border-t-emerald-500 rounded-full animate-spin mb-3"
+            aria-hidden="true"
+          />
+          <p className="text-sm text-slate-400">Loading data...</p>
+        </>
+      ) : (
+        <p className="text-sm text-slate-400">{message}</p>
+      )}
+    </div>
+  );
+}
