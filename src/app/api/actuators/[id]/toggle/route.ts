@@ -1,4 +1,5 @@
 import { toggleActuatorController } from '@/db/controllers/actuatorController';
+import { publishMqtt } from '@/lib/mqtt/client';
 import { requireAuth, requireRole } from '@/lib/auth';
 import { badRequest, forbidden, notFound, ok, serverError, unauthorized } from '@/lib/api';
 
@@ -17,6 +18,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     const body = await request.json().catch(() => ({}));
     const actuator = await toggleActuatorController(actuatorId, user.userId, body.currentState);
+
+    if (actuator) {
+      const topic = `yolofarm/control/${actuator.role}`;
+      await publishMqtt(topic, actuator.currentState);
+    }
 
     return ok({ message: 'Actuator toggled successfully', actuator });
   } catch (error) {

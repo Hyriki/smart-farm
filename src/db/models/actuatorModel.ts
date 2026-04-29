@@ -1,7 +1,6 @@
 'use server';
 
 import { prisma } from '@/lib/prisma';
-import { publishMqtt } from '@/lib/mqtt/client';
 import { CreateActuatorInput, UpdateActuatorInput } from '@/types/sensor';
 
 export async function createActuator(data: CreateActuatorInput) {
@@ -91,10 +90,6 @@ export async function toggleActuator(id: number, userId: number, nextState?: str
       },
     },
   });
-
-  // Publish lệnh điều khiển tới ESP32 qua MQTT
-  const topic = `yolofarm/control/${actuator.role}`;
-  await publishMqtt(topic, targetState);
 
   return updated;
 }
