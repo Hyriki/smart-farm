@@ -106,7 +106,10 @@ export default function DashboardPage() {
         const buzzerActuator = actuators.find((a) => a.role === "buzzer");
         if (buzzerActuator) {
           setBuzzerActuatorId(buzzerActuator.id);
-          setBuzzerMode(buzzerActuator.currentState === "AUTO" ? "AUTO" : "OFF");
+          // currentState for buzzer is "ON" or "OFF" (real hardware state)
+          setBuzzerRealState(buzzerActuator.currentState === "ON" ? "ON" : "OFF");
+          // mode is AUTO when the buzzer actuator is enabled (not forced OFF)
+          setBuzzerMode(buzzerActuator.currentState === "OFF" ? "OFF" : "AUTO");
         }
       } catch (error) {
         console.error("[LOAD_DASHBOARD_DATA_ERROR]", error);
@@ -116,6 +119,10 @@ export default function DashboardPage() {
     }
 
     loadDashboardData();
+
+    // Poll every 5 s so buzzerRealState stays in sync with DB after ESP32 updates
+    const interval = setInterval(loadDashboardData, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   return (
@@ -358,14 +365,12 @@ function HeaterCard({
     <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
       <div className="flex items-center gap-3 mb-6">
         <div
-          className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${
-            isActive ? "bg-emerald-50" : "bg-slate-100"
-          }`}
+          className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${isActive ? "bg-emerald-50" : "bg-slate-100"
+            }`}
         >
           <Flame
-            className={`w-5 h-5 transition-colors ${
-              isActive ? "text-emerald-600" : "text-slate-400"
-            }`}
+            className={`w-5 h-5 transition-colors ${isActive ? "text-emerald-600" : "text-slate-400"
+              }`}
             aria-hidden="true"
           />
         </div>
@@ -374,9 +379,8 @@ function HeaterCard({
 
       <div className="flex items-center justify-between">
         <span
-          className={`text-sm font-semibold ${
-            isActive ? "text-emerald-700" : "text-slate-400"
-          }`}
+          className={`text-sm font-semibold ${isActive ? "text-emerald-700" : "text-slate-400"
+            }`}
         >
           {isActive ? "ON" : "OFF"}
         </span>
@@ -388,17 +392,15 @@ function HeaterCard({
           aria-label={`Heater: currently ${isActive ? "ON" : "OFF"}`}
           disabled={isToggling || actuatorId === null}
           onClick={handleToggle}
-          className={`relative inline-flex w-12 h-6 rounded-full transition-colors duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 ${
-            isActive
+          className={`relative inline-flex w-12 h-6 rounded-full transition-colors duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 ${isActive
               ? "bg-emerald-500 focus-visible:ring-emerald-500"
               : "bg-slate-300 focus-visible:ring-slate-400"
-          }`}
+            }`}
         >
           <span
             aria-hidden="true"
-            className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200 ${
-              isToggling ? "opacity-60" : ""
-            } ${isActive ? "translate-x-6" : "translate-x-0.5"}`}
+            className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200 ${isToggling ? "opacity-60" : ""
+              } ${isActive ? "translate-x-6" : "translate-x-0.5"}`}
           />
         </button>
       </div>
@@ -441,10 +443,14 @@ function BuzzerCard({
 
       const data = await res.json();
 
-      if (res.ok && data.buzzerMode) {
-        onToggle(data.buzzerMode as "AUTO" | "OFF", data.buzzerState as "ON" | "OFF");
-        if (!data.mqttPublished && data.warning) {
-          console.warn("[BuzzerCard]", data.warning);
+      if ((res.ok || res.status === 503) && data.actuator) {
+        // API returns { actuator: { currentState: "ON"|"OFF", ... } }
+        const newState: "ON" | "OFF" =
+          data.actuator.currentState === "ON" ? "ON" : "OFF";
+        const newMode: "AUTO" | "OFF" = newState === "OFF" ? "OFF" : "AUTO";
+        onToggle(newMode, newState);
+        if (res.status === 503) {
+          console.warn("[BuzzerCard] DB updated but MQTT failed:", data.error);
         }
       } else {
         console.error("[BuzzerCard] Toggle failed:", data);
@@ -462,14 +468,12 @@ function BuzzerCard({
     <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
       <div className="flex items-center gap-3 mb-6">
         <div
-          className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${
-            isActive ? "bg-emerald-50" : "bg-slate-100"
-          }`}
+          className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${isActive ? "bg-emerald-50" : "bg-slate-100"
+            }`}
         >
           <Bell
-            className={`w-5 h-5 transition-colors ${
-              isActive ? "text-emerald-600" : "text-slate-400"
-            }`}
+            className={`w-5 h-5 transition-colors ${isActive ? "text-emerald-600" : "text-slate-400"
+              }`}
             aria-hidden="true"
           />
         </div>
@@ -494,13 +498,8 @@ function BuzzerCard({
                   ? "bg-red-100 text-red-700"
                   : "bg-slate-100 text-slate-500"
               }`}
-              title={
-                realState === "ON"
-                  ? "Buzzer is currently sounding"
-                  : "Buzzer is currently silent"
-              }
             >
-              {realState === "ON" ? "ACTIVE" : "SILENT"}
+              {realState === "ON" ? "ON" : "Silent"}
             </span>
           )}
         </div>
@@ -513,17 +512,15 @@ function BuzzerCard({
           aria-label={`Buzzer mode: currently ${mode}${mode === "AUTO" ? `, hardware ${realState}` : ""}`}
           disabled={isToggling || actuatorId === null}
           onClick={handleToggle}
-          className={`relative inline-flex w-12 h-6 rounded-full transition-colors duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 ${
-            isActive
+          className={`relative inline-flex w-12 h-6 rounded-full transition-colors duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 ${isActive
               ? "bg-emerald-500 focus-visible:ring-emerald-500"
               : "bg-slate-300 focus-visible:ring-slate-400"
-          }`}
+            }`}
         >
           <span
             aria-hidden="true"
-            className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200 ${
-              isToggling ? "opacity-60" : ""
-            } ${isActive ? "translate-x-6" : "translate-x-0.5"}`}
+            className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform duration-200 ${isToggling ? "opacity-60" : ""
+              } ${isActive ? "translate-x-6" : "translate-x-0.5"}`}
           />
         </button>
       </div>
