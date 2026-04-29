@@ -17,7 +17,18 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (Number.isNaN(actuatorId)) return badRequest('Invalid actuator id');
 
     const body = await request.json().catch(() => ({}));
-    const actuator = await toggleActuatorController(actuatorId, user.userId, body.currentState);
+
+    // If client sends currentState, compute the opposite (toggle it)
+    // If client sends nextState explicitly, use that
+    // If neither, let the DB model read current state and flip
+    let targetState: string | undefined;
+    if (body.nextState) {
+      targetState = body.nextState;
+    } else if (body.currentState) {
+      targetState = body.currentState === 'ON' ? 'OFF' : 'ON';
+    }
+
+    const actuator = await toggleActuatorController(actuatorId, user.userId, targetState);
 
     if (actuator) {
       const topic = `yolofarm/control/${actuator.role}`;
