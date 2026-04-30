@@ -40,6 +40,8 @@ export function DataVisualization({
             tick={{ fill: "#94a3b8", fontSize: 11 }}
             tickLine={false}
             axisLine={false}
+            tickFormatter={(v: string) => v.substring(0, 5)}
+            minTickGap={40}
           />
 
           <YAxis
@@ -62,6 +64,7 @@ export function DataVisualization({
               `${Number(value).toFixed(1)}${unit}`,
               title || dataKey,
             ]}
+            labelFormatter={(label) => `Time: ${label}`}
             labelStyle={{ color: "#475569", marginBottom: "4px" }}
             cursor={{ stroke: "#e2e8f0", strokeWidth: 1 }}
           />

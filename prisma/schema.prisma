@@ -34,6 +34,8 @@ model Actuator {
   id            Int                    @id @default(autoincrement())
   role          String
   currentState  String                 @default("OFF")
+  // buzzer only: "AUTO" | "OFF". Null for actuators that have no mode concept.
+  mode          String?
   toggledById   Int?
   createdAt     DateTime               @default(now())
   updatedAt     DateTime               @updatedAt
@@ -180,5 +182,21 @@ model AlertTrigger {
   @@index([timestamp])
 }
 
+// Sensor threshold alerts.
+// sensorKey is the deduplication key — at most one active notification per sensor.
+model Notification {
+  id           Int      @id @default(autoincrement())
+  sensorKey    String   @unique  // "soil_moisture" | "temperature" | "humidity" | "light_intensity"
+  type         String   @default("warning")
+  message      String
+  sensorName   String
+  currentValue Float
+  threshold    Float
+  unit         String
+  isResolved   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-
+  @@index([isResolved])
+  @@index([sensorKey])
+}

@@ -42,3 +42,9 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+
+# ESP32 local credentials — copy from config.h.example and fill in
+firmware/include/config.h
+
+# PlatformIO build artifacts — binary, never commit these
+firmware/.pio/

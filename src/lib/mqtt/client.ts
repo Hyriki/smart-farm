@@ -47,7 +47,18 @@ export async function initMqttClient() {
   }
 
   const brokerUrl = process.env.MQTT_BROKER_URL ?? 'mqtt://localhost:1883';
-  const client = mqtt.connect(brokerUrl);
+  // Use WHATWG URL API to parse the broker URL so mqtt.connect() receives an
+  // options object instead of a string — avoids the url.parse() call inside
+  // mqtt@5.x which triggers Node.js DEP0169 on Node 22+.
+  const parsed = new URL(brokerUrl);
+  const client = mqtt.connect({
+    host: parsed.hostname,
+    port: Number(parsed.port) || 1883,
+    protocol: parsed.protocol.replace(':', '') as 'mqtt' | 'mqtts' | 'ws' | 'wss',
+    ...(parsed.username ? { username: decodeURIComponent(parsed.username) } : {}),
+    ...(parsed.password ? { password: decodeURIComponent(parsed.password) } : {}),
+    ...(parsed.pathname && parsed.pathname !== '/' ? { path: parsed.pathname } : {}),
+  });
   globalThis._mqttClientInstance = client;
 
   client.on('connect', () => {
