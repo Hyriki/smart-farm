@@ -28,6 +28,7 @@ export default function LoginPage() {
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    console.log("[Login Flow] Form submission triggered", { email });
     setError("");
 
     if (!email || !password) {
@@ -38,6 +39,7 @@ export default function LoginPage() {
     try {
       setIsLoading(true);
 
+      console.log("[Login Flow] Before API call to /api/auth/login");
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -45,27 +47,31 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
 
+      console.log("[Login Flow] After API response received", { status: response.status });
+
       const data: LoginResponse = await response.json();
 
-      if (!response.ok) {
-        setError(data.error || "Login failed");
-        return;
+      if (response.ok) {
+        if (!data.user) {
+          console.warn("[Login Flow] Login failed: user data was not returned", data);
+          setError("Login failed: user data was not returned");
+          return;
+        }
+
+        console.log("[Login Flow] Login successful, redirecting to /dashboard");
+        localStorage.setItem("isAuthenticated", "true");
+        localStorage.setItem("userRole", data.user.role);
+        localStorage.setItem("username", data.user.name || data.user.email);
+
+        router.push("/dashboard"); // Use push instead of replace to follow standard navigation, though replace is fine too. Using push here.
+        router.refresh();
+      } else {
+        console.warn("[Login Flow] Login failed", data);
+        setError(data.error || "Invalid credentials");
       }
-
-      if (!data.user) {
-        setError("Login failed: user data was not returned");
-        return;
-      }
-
-      localStorage.setItem("isAuthenticated", "true");
-      localStorage.setItem("userRole", data.user.role);
-      localStorage.setItem("username", data.user.name || data.user.email);
-
-      router.replace("/dashboard");
-      router.refresh();
     } catch (err) {
-      console.error("[LOGIN_ERROR]", err);
-      setError("Unable to login. Please try again.");
+      console.error("[Login Flow] Network error", err);
+      setError("Server unreachable. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -146,6 +152,13 @@ export default function LoginPage() {
             >
               {isLoading ? "Signing in…" : "Sign In"}
             </Button>
+            
+            <div className="text-center mt-6">
+              <span className="text-sm text-slate-500">Don&apos;t have an account? </span>
+              <Button variant="link" className="p-0 h-auto text-emerald-600 font-medium" onClick={() => router.push('/signup')} type="button">
+                Sign up
+              </Button>
+            </div>
           </form>
         </Card>
 
