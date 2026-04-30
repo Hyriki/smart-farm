@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useNotifications, mapApiNotification } from "@/lib/notifications";
 import { TopNav } from "@/components/TopNav";
 import { CircularGauge } from "@/components/CircularGauge";
 import { DataVisualization } from "@/components/DataVisualization";
 import { SystemStatus } from "@/components/SystemStatus";
-import { MessageBox } from "@/components/MessageBox";
 import { Cpu, Wifi, Bell, Activity, Flame } from "lucide-react";
 
 type TrendPoint = {
@@ -27,6 +27,19 @@ type ActuatorData = {
   id: number;
   role: string;
   currentState: string;
+  mode?: string | null; // buzzer only: "AUTO" | "OFF"
+};
+
+type ApiNotification = {
+  id: number;
+  sensorKey: string;
+  type: string;
+  message: string;
+  sensorName: string;
+  currentValue: number;
+  threshold: number;
+  unit: string;
+  updatedAt: string;
 };
 
 type DashboardData = {
@@ -43,6 +56,7 @@ type DashboardData = {
   };
   stats: DashboardStats;
   actuators?: ActuatorData[];
+  notifications?: ApiNotification[];
 };
 
 export default function DashboardPage() {
@@ -66,6 +80,8 @@ export default function DashboardPage() {
 
   const [stats, setStats] = useState<DashboardStats>({});
   const [isLoading, setIsLoading] = useState(true);
+
+  const { setNotifications } = useNotifications();
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -106,10 +122,12 @@ export default function DashboardPage() {
         const buzzerActuator = actuators.find((a) => a.role === "buzzer");
         if (buzzerActuator) {
           setBuzzerActuatorId(buzzerActuator.id);
-          // currentState for buzzer is "ON" or "OFF" (real hardware state)
-          setBuzzerRealState(buzzerActuator.currentState === "ON" ? "ON" : "OFF");
-          // mode is AUTO when the buzzer actuator is enabled (not forced OFF)
-          setBuzzerMode(buzzerActuator.currentState === "OFF" ? "OFF" : "AUTO");
+          setBuzzerMode(buzzerActuator.mode === "AUTO" ? "AUTO" : "OFF");
+        }
+
+        // Seed context with notifications from initial dashboard load
+        if (data.notifications) {
+          setNotifications(data.notifications.map(mapApiNotification));
         }
       } catch (error) {
         console.error("[LOAD_DASHBOARD_DATA_ERROR]", error);
@@ -118,12 +136,51 @@ export default function DashboardPage() {
       }
     }
 
-    loadDashboardData();
+    async function fetchBuzzerRealState() {
+      try {
+        const token =
+          typeof window !== "undefined" ? localStorage.getItem("token") : null;
+        const res = await fetch("/api/actuators/runtime", {
+          credentials: "include",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setBuzzerRealState(data.buzzerState as "ON" | "OFF");
+        }
+      } catch {
+        // silent — badge just stays stale
+      }
+    }
 
-    // Poll every 5 s so buzzerRealState stays in sync with DB after ESP32 updates
-    const interval = setInterval(loadDashboardData, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    async function fetchNotifications() {
+      try {
+        const token =
+          typeof window !== "undefined" ? localStorage.getItem("token") : null;
+        const res = await fetch("/api/notifications", {
+          credentials: "include",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setNotifications((data.notifications ?? []).map(mapApiNotification));
+        }
+      } catch {
+        // silent
+      }
+    }
+
+    loadDashboardData();
+    fetchBuzzerRealState();
+    fetchNotifications();
+
+    const interval = setInterval(fetchBuzzerRealState, 5000);
+    const notifInterval = setInterval(fetchNotifications, 10000);
+    return () => {
+      clearInterval(interval);
+      clearInterval(notifInterval);
+    };
+  }, [setNotifications]);
 
   return (
     <div className="min-h-dvh bg-slate-50">
@@ -177,11 +234,6 @@ export default function DashboardPage() {
                 iconBg="bg-violet-500"
               />
             </div>
-          </section>
-
-          {/* System Messages */}
-          <section aria-label="System messages" className="mb-8">
-            <MessageBox />
           </section>
 
           {/* Environmental Monitoring */}
@@ -347,12 +399,13 @@ function HeaterCard({
         body: JSON.stringify({ currentState: state }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (res.ok && data.actuator) {
         onToggle(data.actuator.currentState === "ON" ? "ON" : "OFF");
+        if (data.warning) console.warn("[HeaterCard] MQTT skipped:", data.warning);
       } else {
-        console.error("[HeaterCard] Toggle failed:", data);
+        console.error(`[HeaterCard] Toggle failed — status ${res.status}:`, data);
       }
     } catch (err) {
       console.error("[HeaterCard] Toggle error:", err);
@@ -423,10 +476,12 @@ function BuzzerCard({
   onToggle: (mode: "AUTO" | "OFF", state: "ON" | "OFF") => void;
 }) {
   const [isToggling, setIsToggling] = useState(false);
+  const [toggleError, setToggleError] = useState<string | null>(null);
 
   const handleToggle = async () => {
     if (actuatorId === null || isToggling) return;
     setIsToggling(true);
+    setToggleError(null);
     try {
       const token =
         typeof window !== "undefined" ? localStorage.getItem("token") : null;
@@ -441,22 +496,23 @@ function BuzzerCard({
         body: JSON.stringify({}),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
-      if ((res.ok || res.status === 503) && data.actuator) {
-        // API returns { actuator: { currentState: "ON"|"OFF", ... } }
-        const newState: "ON" | "OFF" =
-          data.actuator.currentState === "ON" ? "ON" : "OFF";
-        const newMode: "AUTO" | "OFF" = newState === "OFF" ? "OFF" : "AUTO";
+      if (res.ok && data.buzzerMode !== undefined) {
+        const newMode: "AUTO" | "OFF" = data.buzzerMode === "AUTO" ? "AUTO" : "OFF";
+        const newState: "ON" | "OFF" = data.buzzerState === "ON" ? "ON" : "OFF";
         onToggle(newMode, newState);
-        if (res.status === 503) {
-          console.warn("[BuzzerCard] DB updated but MQTT failed:", data.error);
+        if (data.warning) {
+          console.warn("[BuzzerCard] MQTT skipped:", data.warning);
         }
       } else {
-        console.error("[BuzzerCard] Toggle failed:", data);
+        const errMsg = data?.error ?? `HTTP ${res.status}`;
+        console.error(`[BuzzerCard] Toggle failed — status ${res.status}:`, data);
+        setToggleError(errMsg.includes("migration") ? "DB not migrated" : "Toggle failed");
       }
     } catch (err) {
       console.error("[BuzzerCard] Toggle error:", err);
+      setToggleError("Network error");
     } finally {
       setIsToggling(false);
     }
@@ -479,6 +535,10 @@ function BuzzerCard({
         </div>
         <h3 className="text-base font-semibold text-slate-700">Buzzer</h3>
       </div>
+
+      {toggleError && (
+        <p className="text-xs text-red-600 mb-3 font-medium">{toggleError}</p>
+      )}
 
       <div className="flex items-center justify-between">
         {/* Left: mode label + real-state badge */}

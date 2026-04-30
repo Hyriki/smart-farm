@@ -1,6 +1,6 @@
-import { toggleActuatorController, getActuatorByIdController } from '@/db/controllers/actuatorController';
 import { publishMqtt } from '@/lib/mqtt/client';
 import { getBuzzerHardwareState, forceBuzzerStateOff } from '@/lib/mqtt/sensorDataHandler';
+import { prisma } from '@/lib/prisma';
 import { requireAuth, requireRole } from '@/lib/auth';
 import { badRequest, forbidden, notFound, ok, serverError, unauthorized } from '@/lib/api';
 
@@ -19,68 +19,79 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     const body = await request.json().catch(() => ({}));
 
-    const currentActuator = await getActuatorByIdController(actuatorId);
+    // Direct Prisma lookup — no 'use server' controller chain.
+    const actuator = await prisma.actuator.findUnique({
+      where: { id: actuatorId },
+      select: { id: true, role: true, currentState: true, mode: true },
+    });
+    if (!actuator) return notFound('Actuator not found');
 
     // ----------------------------------------------------------------
-    // Buzzer: toggle MODE (AUTO ↔ OFF), not hardware state
+    // Buzzer — toggle MODE (OFF ↔ AUTO).
+    // Hardware state (buzzerState) is managed by threshold logic; we only
+    // control the mode here. Forcing buzzerState OFF when mode goes to OFF.
     // ----------------------------------------------------------------
-    if (currentActuator.role === 'buzzer') {
-      // Read current mode from DB (authoritative source)
-      const currentMode: 'AUTO' | 'OFF' =
-        currentActuator.currentState === 'AUTO' ? 'AUTO' : 'OFF';
+    if (actuator.role === 'buzzer') {
+      const currentMode: 'AUTO' | 'OFF' = actuator.mode === 'AUTO' ? 'AUTO' : 'OFF';
       const nextMode: 'AUTO' | 'OFF' = currentMode === 'AUTO' ? 'OFF' : 'AUTO';
 
-      // Persist new mode in DB
-      const updatedActuator = await toggleActuatorController(actuatorId, user.userId, nextMode);
+      await prisma.actuator.update({
+        where: { id: actuatorId },
+        data: { mode: nextMode, toggledById: user.userId },
+      });
 
       let mqttPublished = false;
       let warning: string | undefined;
 
       if (nextMode === 'OFF') {
-        forceBuzzerStateOff();
+        await forceBuzzerStateOff();
         mqttPublished = await publishMqtt('yolofarm/control/buzzer', 'OFF');
         if (!mqttPublished) {
-          warning = 'Buzzer mode saved but MQTT publish skipped (broker not connected)';
+          warning = 'MQTT not connected — DB updated, hardware publish skipped';
         }
       }
-
-      const buzzerState = getBuzzerHardwareState();
 
       return ok({
         success: true,
         actuatorId,
         buzzerMode: nextMode,
-        buzzerState,
+        buzzerState: getBuzzerHardwareState(),
         mqttPublished,
         ...(warning ? { warning } : {}),
-        actuator: updatedActuator,
       });
     }
 
     // ----------------------------------------------------------------
-    // Generic actuators (heater, relay, etc.)
+    // Generic actuators (heater, etc.) — toggle currentState ON ↔ OFF.
     // ----------------------------------------------------------------
-    let targetState: string | undefined;
-    if (body.nextState) {
-      targetState = body.nextState;
-    } else if (body.currentState) {
-      targetState = body.currentState === 'ON' ? 'OFF' : 'ON';
-    }
+    const targetState: 'ON' | 'OFF' =
+      body.nextState === 'ON' || body.nextState === 'OFF'
+        ? body.nextState
+        : actuator.currentState === 'ON' ? 'OFF' : 'ON';
 
-    const actuator = await toggleActuatorController(actuatorId, user.userId, targetState);
+    const updated = await prisma.actuator.update({
+      where: { id: actuatorId },
+      data: { currentState: targetState, toggledById: user.userId },
+      select: { id: true, role: true, currentState: true, updatedAt: true },
+    });
 
-    let mqttPublished = false;
-    if (actuator) {
-      const topic = `yolofarm/control/${actuator.role}`;
-      mqttPublished = await publishMqtt(topic, actuator.currentState);
-    }
+    const mqttPublished = await publishMqtt(
+      `yolofarm/control/${updated.role}`,
+      updated.currentState,
+    );
 
-    return ok({ message: 'Actuator toggled successfully', actuator, mqttPublished });
+    return ok({
+      success: true,
+      actuator: updated,
+      mqttPublished,
+      ...(mqttPublished ? {} : { warning: 'MQTT not connected — DB updated, hardware publish skipped' }),
+    });
+
   } catch (error) {
+    console.error('[TOGGLE_ROUTE_ERROR]', error);
     const message = error instanceof Error ? error.message : 'Internal server error';
     if (message.includes('token')) return unauthorized(message);
     if (message === 'Insufficient permissions') return forbidden(message);
-    if (message === 'Actuator not found') return notFound(message);
     return serverError(error);
   }
 }

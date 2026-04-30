@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { initializeMqtt } from '@/lib/mqtt/init';
+import { Providers } from "./providers";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -20,19 +20,20 @@ export const metadata: Metadata = {
 
 
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  await initializeMqtt();
-
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col" suppressHydrationWarning>
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

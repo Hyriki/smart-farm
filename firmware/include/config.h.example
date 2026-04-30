@@ -1,0 +1,10 @@
+#pragma once
+
+// ===================== WIFI CONFIG =====================
+#define WIFI_SSID     "your_wifi_ssid"
+#define WIFI_PASSWORD "your_wifi_password"
+
+// ===================== MQTT CONFIG =====================
+// IP address of the machine running the MQTT broker (e.g. Mosquitto)
+#define MQTT_BROKER   "192.168.x.x"
+#define MQTT_PORT     1883

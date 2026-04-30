@@ -4,6 +4,7 @@
 #include <PubSubClient.h>
 #include "DHT.h"
 #include <BH1750.h>
+#include "config.h"
 
 // ===================== PIN CONFIG =====================
 #define BUZZER_PIN 18
@@ -11,12 +12,6 @@
 #define SOIL_MOISTURE_PIN 36
 #define DHT_TYPE DHT11
 #define DHT_PIN 5
-
-// ===================== WIFI / MQTT CONFIG =====================
-#define WIFI_SSID     "ChaSing"
-#define WIFI_PASSWORD "0786228108"
-#define MQTT_BROKER   "192.168.1.37"
-#define MQTT_PORT     1883
 
 #define SENSOR_JSON_TOPIC     "yolofarm/sensor/all"
 #define BUZZER_CONTROL_TOPIC  "yolofarm/control/buzzer"

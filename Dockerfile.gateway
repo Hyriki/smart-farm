@@ -8,10 +8,9 @@ RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements (if you have one) or install directly
-COPY gateway/requirements.txt* ./
-RUN if [ -f requirements.txt ]; then pip install -r requirements.txt; fi \
-    && pip install paho-mqtt adafruit-io python-dotenv
+# Install Python dependencies
+COPY gateway/requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy gateway code
 COPY gateway/mqtt_bridge.py ./
