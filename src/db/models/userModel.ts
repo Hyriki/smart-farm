@@ -1,6 +1,6 @@
 "use server";
 import { prisma } from "@/lib/prisma";
-import { CreateUserInput } from "@/types";
+import { CreateUserInput, HashedPassword } from "@/types";
 
 export async function createUser(data: CreateUserInput){
     const user = await prisma.user.create({
@@ -10,6 +10,8 @@ export async function createUser(data: CreateUserInput){
             password: data.password,
             role: data.role || "viewer",
             isVerified: false,
+            verificationToken: data.verificationToken,
+            verificationTokenExpires: data.verificationTokenExpires,
             createdAt: new Date(),
             updatedAt: new Date(),
         }
@@ -17,12 +19,58 @@ export async function createUser(data: CreateUserInput){
     return user;
 }
 
-export async function verifyUserEmail(id: number) {
-    const user = await prisma.user.update({
-        where: { id },
-        data: { isVerified: true }
+export async function verifyUserWithToken(token: string) {
+    const user = await prisma.user.findFirst({
+        where: {
+            verificationToken: token,
+            verificationTokenExpires: {
+                gt: new Date()
+            }
+        }
     });
-    return user;
+
+    if (!user) return null;
+
+    return await prisma.user.update({
+        where: { id: user.id },
+        data: {
+            isVerified: true,
+            verificationToken: null,
+            verificationTokenExpires: null
+        }
+    });
+}
+
+export async function setResetPasswordToken(email: string, token: string, expires: Date) {
+    return await prisma.user.update({
+        where: { email },
+        data: {
+            resetPasswordToken: token,
+            resetPasswordTokenExpires: expires
+        }
+    });
+}
+
+export async function resetPasswordWithToken(token: string, newPassword: HashedPassword) {
+    const user = await prisma.user.findFirst({
+        where: {
+            resetPasswordToken: token,
+            resetPasswordTokenExpires: {
+                gt: new Date()
+            }
+        }
+    });
+
+    if (!user) return null;
+
+    return await prisma.user.update({
+        where: { id: user.id },
+        data: {
+            password: newPassword,
+            resetPasswordToken: null,
+            resetPasswordTokenExpires: null
+        }
+    });
 }
 
 export async function getUserByEmail(email: string) {

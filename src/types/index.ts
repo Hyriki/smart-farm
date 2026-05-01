@@ -7,6 +7,8 @@ export type CreateUserInput = {
   email: UnverifiedEmail;
   password: HashedPassword;
   role?: string;
+  verificationToken?: string;
+  verificationTokenExpires?: Date;
 };
 
 export type ResponseUser = {

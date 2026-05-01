@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Leaf } from "lucide-react";
+import Link from "next/link";
 
 interface FormErrors {
   fullName?: string | null;
@@ -28,7 +29,6 @@ export default function SignUpPage() {
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
 
   const debouncedFullName = useDebounce(fullName, 300);
   const debouncedEmail = useDebounce(email, 300);
@@ -67,29 +67,14 @@ export default function SignUpPage() {
       await apiClient('/api/signup', {
         data: { fullName, email, password }
       });
-      setIsSuccess(true);
-      // Optional auto-redirect after few seconds:
-      // setTimeout(() => router.push('/login'), 2000);
+      localStorage.setItem("pendingVerificationEmail", email);
+      router.push('/login?signup=success');
     } catch (error: any) {
       setErrors(prev => ({ ...prev, server: error.message }));
     } finally {
       setIsSubmitting(false);
     }
   };
-
-  if (isSuccess) {
-    return (
-      <div className="min-h-dvh bg-gradient-to-br from-green-50 via-white to-green-100 flex items-center justify-center p-4">
-        <Card className="w-full max-w-sm p-8 text-center border border-slate-200 shadow-sm">
-          <h2 className="text-2xl font-bold text-emerald-600 mb-2">Account Created!</h2>
-          <p className="text-slate-600 mb-6">Your registration was successful. You can now sign in.</p>
-          <Button onClick={() => router.push('/login')} className="w-full bg-emerald-600 hover:bg-emerald-700">
-            Go to Login
-          </Button>
-        </Card>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-dvh bg-gradient-to-br from-green-50 via-white to-green-100 flex items-center justify-center p-4">
@@ -174,9 +159,9 @@ export default function SignUpPage() {
             
             <div className="text-center mt-4">
               <span className="text-sm text-slate-500">Already have an account? </span>
-              <Button variant="link" className="p-0 h-auto text-emerald-600" onClick={() => router.push('/login')} type="button">
+              <Link href="/login" className="text-emerald-600 font-medium hover:underline">
                 Sign in
-              </Button>
+              </Link>
             </div>
           </form>
         </Card>

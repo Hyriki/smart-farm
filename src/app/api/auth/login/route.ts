@@ -46,6 +46,12 @@ export async function POST(request: Request){
                 {status: 404}
             )
         }
+        if (message.includes("Email not verified")){
+            return Response.json(
+                {error: "Your account is not verified. Please check your email."},
+                {status: 403}
+            )
+        }
         return Response.json(
             {error: message},
             {status: 500}

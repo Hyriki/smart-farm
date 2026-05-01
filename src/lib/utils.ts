@@ -26,3 +26,7 @@ export function verifyToken(token: string) {
         return null;
     }
 }
+
+export function generateRandomToken(): string {
+    return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+}
