@@ -1,7 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useNotifications, mapApiNotification } from "@/lib/notifications";
+
+function formatHHMMSS(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
 import { TopNav } from "@/components/TopNav";
 import { CircularGauge } from "@/components/CircularGauge";
 import { DataVisualization } from "@/components/DataVisualization";
@@ -60,6 +67,8 @@ type DashboardData = {
 };
 
 export default function DashboardPage() {
+  const router = useRouter();
+
   // Heater
   const [heaterActuatorId, setHeaterActuatorId] = useState<number | null>(null);
   const [heaterState, setHeaterState] = useState<"ON" | "OFF">("OFF");
@@ -95,7 +104,25 @@ export default function DashboardPage() {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
 
-        if (!response.ok) throw new Error("Failed to fetch dashboard data");
+        // Self-heal expired-session: stale localStorage.isAuthenticated may keep
+        // the user on /dashboard even after the JWT cookie has expired. Redirect.
+        if (response.status === 401) {
+          if (typeof window !== "undefined") {
+            localStorage.removeItem("isAuthenticated");
+            localStorage.removeItem("token");
+          }
+          router.replace("/login");
+          return;
+        }
+
+        if (!response.ok) {
+          const body = await response.text().catch(() => "<unreadable body>");
+          console.error(
+            `[LOAD_DASHBOARD_DATA] HTTP ${response.status} ${response.statusText} — body:`,
+            body,
+          );
+          throw new Error(`Failed to fetch dashboard data (HTTP ${response.status})`);
+        }
 
         const data: DashboardData = await response.json();
 
@@ -171,16 +198,98 @@ export default function DashboardPage() {
     }
 
     loadDashboardData();
-    fetchBuzzerRealState();
+    fetchBuzzerRealState(); // initial value before SSE delivers the first push
     fetchNotifications();
 
-    const interval = setInterval(fetchBuzzerRealState, 5000);
     const notifInterval = setInterval(fetchNotifications, 10000);
+    // Trends/stats only need slow refresh; SSE handles the live gauges + buzzer.
+    const slowRefresh = setInterval(loadDashboardData, 30000);
+
     return () => {
-      clearInterval(interval);
       clearInterval(notifInterval);
+      clearInterval(slowRefresh);
     };
-  }, [setNotifications]);
+  }, [setNotifications, router]);
+
+  // ─── Real-time push via SSE ────────────────────────────────────────────────
+  useEffect(() => {
+    let es: EventSource | null = null;
+    let retryHandle: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    function connect() {
+      if (cancelled) return;
+      es = new EventSource("/api/dashboard/stream", { withCredentials: true });
+
+      es.addEventListener("snapshot", (ev) => {
+        try {
+          const snap = JSON.parse((ev as MessageEvent).data) as {
+            humidity: number | null;
+            temperature: number | null;
+            soil_moisture: number | null;
+            light: number | null;
+            buzzerMode: "AUTO" | "OFF";
+            buzzerState: "ON" | "OFF";
+            heaterState: "ON" | "OFF";
+            lastUpdated: string | null;
+          };
+
+          // Live gauges
+          if (snap.humidity !== null) setCurrentHumidity(snap.humidity);
+          if (snap.temperature !== null) setCurrentTemperature(snap.temperature);
+          if (snap.soil_moisture !== null) setCurrentSoilMoisture(snap.soil_moisture);
+          if (snap.light !== null) setCurrentLightIntensity(snap.light);
+
+          // Buzzer real state — firmware-reported, refresh from SSE.
+          // NOTE: heaterState and buzzerMode are user-toggled (DB authoritative).
+          // We deliberately do NOT update them from SSE — the toggle response
+          // is the source of truth; SSE updates would race with user clicks
+          // and cause the button to "jump".
+          setBuzzerRealState(snap.buzzerState);
+
+          // Append chart points (cap last 50). Use lastUpdated for the x-axis
+          // so points stay in chronological order across reloads.
+          if (snap.lastUpdated) {
+            const time = formatHHMMSS(snap.lastUpdated);
+            const append = (
+              setter: React.Dispatch<React.SetStateAction<TrendPoint[]>>,
+              value: number | null,
+            ) => {
+              if (value === null) return;
+              setter((prev) => {
+                const last = prev[prev.length - 1];
+                // Skip if the same timestamp arrived twice.
+                if (last && last.time === time) return prev;
+                const next = [...prev, { time, value }];
+                return next.length > 50 ? next.slice(next.length - 50) : next;
+              });
+            };
+            append(setLightTrend, snap.light);
+            append(setTemperatureTrend, snap.temperature);
+            append(setMoistureTrend, snap.soil_moisture);
+          }
+        } catch (err) {
+          console.error("[SSE] failed to parse snapshot", err);
+        }
+      });
+
+      es.onerror = () => {
+        // Browser auto-reconnects; close + retry only if the stream stays broken.
+        es?.close();
+        es = null;
+        if (!cancelled) {
+          retryHandle = setTimeout(connect, 3000);
+        }
+      };
+    }
+
+    connect();
+    return () => {
+      cancelled = true;
+      if (retryHandle) clearTimeout(retryHandle);
+      es?.close();
+    };
+  }, []);
 
   return (
     <div className="min-h-dvh bg-slate-50">
@@ -380,10 +489,14 @@ function HeaterCard({
   onToggle: (state: "ON" | "OFF") => void;
 }) {
   const [isToggling, setIsToggling] = useState(false);
+  const inFlightRef = useRef(false); // synchronous double-click guard
   const isActive = state === "ON";
 
   const handleToggle = async () => {
-    if (actuatorId === null || isToggling) return;
+    // Synchronous reject — useState is async so a fast double-click would
+    // otherwise pass two requests through before the disabled prop applied.
+    if (actuatorId === null || inFlightRef.current) return;
+    inFlightRef.current = true;
     setIsToggling(true);
     try {
       const token =
@@ -402,6 +515,7 @@ function HeaterCard({
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && data.actuator) {
+        // Backend-confirmed state — never trust a click-only optimistic update.
         onToggle(data.actuator.currentState === "ON" ? "ON" : "OFF");
         if (data.warning) console.warn("[HeaterCard] MQTT skipped:", data.warning);
       } else {
@@ -410,6 +524,7 @@ function HeaterCard({
     } catch (err) {
       console.error("[HeaterCard] Toggle error:", err);
     } finally {
+      inFlightRef.current = false;
       setIsToggling(false);
     }
   };
@@ -477,9 +592,11 @@ function BuzzerCard({
 }) {
   const [isToggling, setIsToggling] = useState(false);
   const [toggleError, setToggleError] = useState<string | null>(null);
+  const inFlightRef = useRef(false);
 
   const handleToggle = async () => {
-    if (actuatorId === null || isToggling) return;
+    if (actuatorId === null || inFlightRef.current) return;
+    inFlightRef.current = true;
     setIsToggling(true);
     setToggleError(null);
     try {
@@ -514,6 +631,7 @@ function BuzzerCard({
       console.error("[BuzzerCard] Toggle error:", err);
       setToggleError("Network error");
     } finally {
+      inFlightRef.current = false;
       setIsToggling(false);
     }
   };

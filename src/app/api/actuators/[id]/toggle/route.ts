@@ -45,10 +45,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
       if (nextMode === 'OFF') {
         await forceBuzzerStateOff();
-        mqttPublished = await publishMqtt('yolofarm/control/buzzer', 'OFF');
-        if (!mqttPublished) {
-          warning = 'MQTT not connected — DB updated, hardware publish skipped';
-        }
+      }
+      // Always tell firmware the new mode — firmware owns threshold logic.
+      mqttPublished = await publishMqtt('yolofarm/control/buzzer', nextMode);
+      if (!mqttPublished) {
+        warning = 'MQTT not connected — DB updated, hardware publish skipped';
       }
 
       return ok({

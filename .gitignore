@@ -48,3 +48,6 @@ firmware/include/config.h
 
 # PlatformIO build artifacts — binary, never commit these
 firmware/.pio/
+
+#claude
+.claude/

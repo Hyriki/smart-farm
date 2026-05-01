@@ -2,6 +2,9 @@ import { prisma } from '@/lib/prisma';
 import { requireAuth } from '@/lib/auth';
 import { ok, unauthorized } from '@/lib/api';
 
+export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
+
 export async function GET(request: Request) {
   try {
     requireAuth(request);

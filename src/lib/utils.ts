@@ -15,7 +15,8 @@ export async function verifyPassword(password: string, hashedPassword: HashedPas
 const JWT_SECRET = process.env.JWT_SECRET || 'default_secret';
 
 export function generateToken(userId: number, email: VerifiedEmail, role: string): string {
-    return jwt.sign({ userId, email, role }, JWT_SECRET, { expiresIn: '1h' });
+    // Lifetime matches the Set-Cookie Max-Age in /api/auth/login (24h).
+    return jwt.sign({ userId, email, role }, JWT_SECRET, { expiresIn: '24h' });
 }
 
 export function verifyToken(token: string) {

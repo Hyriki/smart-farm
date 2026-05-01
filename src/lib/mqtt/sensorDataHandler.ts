@@ -2,8 +2,6 @@
 import { createTelemetryController } from '@/db/controllers/sensorController';
 import { publishMqtt } from './client';
 
-const SOIL_MOISTURE_THRESHOLD = 50;
-
 // Sensor threshold → notification config
 const NOTIFICATION_THRESHOLDS = [
   {
@@ -67,6 +65,71 @@ globalThis._buzzerHardwareState ??= 'OFF';
 
 export function getBuzzerHardwareState(): 'ON' | 'OFF' {
   return globalThis._buzzerHardwareState ?? 'OFF';
+}
+
+// ─── Latest-sensor cache + pub-sub ─────────────────────────────────────────────
+// The dashboard reads `current` from this cache (zero DB round-trips), and SSE
+// subscribers get a push the moment a new MQTT payload is processed.
+
+export type LatestSensorSnapshot = {
+  humidity: number | null;
+  temperature: number | null;
+  soil_moisture: number | null;
+  light: number | null;
+  buzzerMode: 'AUTO' | 'OFF';
+  buzzerState: 'ON' | 'OFF';
+  heaterState: 'ON' | 'OFF';
+  lastUpdated: string | null; // ISO timestamp
+};
+
+declare global {
+  var _latestSensorSnapshot: LatestSensorSnapshot | undefined;
+  var _sensorSseSubscribers: Set<(snap: LatestSensorSnapshot) => void> | undefined;
+}
+
+globalThis._latestSensorSnapshot ??= {
+  humidity: null,
+  temperature: null,
+  soil_moisture: null,
+  light: null,
+  buzzerMode: 'OFF',
+  buzzerState: 'OFF',
+  heaterState: 'OFF',
+  lastUpdated: null,
+};
+
+globalThis._sensorSseSubscribers ??= new Set();
+
+export function getLatestSensorSnapshot(): LatestSensorSnapshot {
+  return globalThis._latestSensorSnapshot ?? {
+    humidity: null,
+    temperature: null,
+    soil_moisture: null,
+    light: null,
+    buzzerMode: 'OFF',
+    buzzerState: 'OFF',
+    heaterState: 'OFF',
+    lastUpdated: null,
+  };
+}
+
+export function subscribeToSensorSnapshot(cb: (snap: LatestSensorSnapshot) => void): () => void {
+  globalThis._sensorSseSubscribers?.add(cb);
+  return () => {
+    globalThis._sensorSseSubscribers?.delete(cb);
+  };
+}
+
+function broadcastSnapshot(snap: LatestSensorSnapshot) {
+  const subs = globalThis._sensorSseSubscribers;
+  if (!subs) return;
+  for (const cb of subs) {
+    try {
+      cb(snap);
+    } catch (err) {
+      console.error('[SSE] subscriber threw:', err);
+    }
+  }
 }
 
 export async function forceBuzzerStateOff(): Promise<void> {
@@ -162,49 +225,31 @@ export async function processSensorData(
       select: { currentState: true },
     });
 
-    // mode column is the authority for buzzer (AUTO/OFF).
+    // mode column is the authority for buzzer (AUTO/OFF) — set by user toggle.
     const buzzerMode: 'AUTO' | 'OFF' =
       buzzerActuator?.mode === 'AUTO' ? 'AUTO' : 'OFF';
 
-    // currentState for buzzer is the hardware state (ON/OFF) — persisted.
+    // currentState for buzzer is the hardware state (ON/OFF) — mirror it from
+    // what the firmware just reported so the dashboard badge reflects reality.
+    const reportedHardwareState: 'ON' | 'OFF' =
+      payload.buzzer === 'ON' ? 'ON' : 'OFF';
     const dbHardwareState =
       (buzzerActuator?.currentState ?? 'OFF') as 'ON' | 'OFF';
 
-    // Keep in-process cache in sync with DB value read.
-    globalThis._buzzerHardwareState = dbHardwareState;
+    if (buzzerActuator && reportedHardwareState !== dbHardwareState) {
+      await prisma.actuator.update({
+        where: { id: buzzerActuator.id },
+        data: { currentState: reportedHardwareState },
+      });
+      console.log(`[BUZZER] hwState synced from firmware: ${dbHardwareState} → ${reportedHardwareState}`);
+    }
+    globalThis._buzzerHardwareState = reportedHardwareState;
 
-    // Heater state comes from DB, not from the mock/ESP32 payload (which may be random).
+    // Heater state comes from DB (user toggle is the source of truth).
     const heaterState: 'ON' | 'OFF' =
       heaterActuator?.currentState === 'ON' ? 'ON' : 'OFF';
 
-    console.log(`[BUZZER] DB mode: ${buzzerMode}, DB hwState: ${dbHardwareState}`);
-
-    if (buzzerMode === 'AUTO') {
-      const shouldActivate = payload.soil_moisture < SOIL_MOISTURE_THRESHOLD;
-      const newState: 'ON' | 'OFF' = shouldActivate ? 'ON' : 'OFF';
-
-      if (newState !== dbHardwareState && buzzerActuator) {
-        globalThis._buzzerHardwareState = newState;
-        await prisma.actuator.update({
-          where: { id: buzzerActuator.id },
-          data: { currentState: newState },
-        });
-        console.log(`[BUZZER] AUTO → state changed ${dbHardwareState} → ${newState}`);
-        await publishMqtt('yolofarm/control/buzzer', newState);
-      }
-    } else {
-      // mode=OFF → ensure hardware is off.
-      if (dbHardwareState !== 'OFF' && buzzerActuator) {
-        globalThis._buzzerHardwareState = 'OFF';
-        await prisma.actuator.update({
-          where: { id: buzzerActuator.id },
-          data: { currentState: 'OFF' },
-        });
-        await publishMqtt('yolofarm/control/buzzer', 'OFF');
-      }
-    }
-
-    const buzzerState = globalThis._buzzerHardwareState ?? 'OFF';
+    const buzzerState = reportedHardwareState;
 
     // Save telemetry (sensor measurements only — no actuator state in properties).
     const telemetry = await createTelemetryController(sensorId, {
@@ -218,6 +263,21 @@ export async function processSensorData(
 
     // Sync threshold notifications to DB.
     await syncNotifications(payload);
+
+    // Update in-memory cache and push to SSE subscribers — this is what makes
+    // the dashboard real-time without polling the DB.
+    const snapshot: LatestSensorSnapshot = {
+      humidity: payload.humidity,
+      temperature: payload.temperature,
+      soil_moisture: payload.soil_moisture,
+      light: payload.light,
+      buzzerMode,
+      buzzerState,
+      heaterState,
+      lastUpdated: new Date().toISOString(),
+    };
+    globalThis._latestSensorSnapshot = snapshot;
+    broadcastSnapshot(snapshot);
 
     // Broadcast to dashboard (via MQTT processed topic).
     await publishMqtt(`yolofarm/sensor/${sensorId}/processed`, {

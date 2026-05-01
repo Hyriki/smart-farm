@@ -1,33 +1,112 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { Badge } from "./ui/badge";
 import { Wifi, Cpu, CheckCircle, AlertTriangle } from "lucide-react";
+
+type Status = "online" | "offline" | "warning";
 
 interface StatusItem {
   id: string;
   name: string;
   icon: typeof Wifi;
-  status: "online" | "offline" | "warning";
+  status: Status;
   lastUpdate: string;
 }
 
-export function SystemStatus() {
-  const statusItems: StatusItem[] = [
-    {
-      id: "gateway",
-      name: "Gateway Connection",
-      icon: Wifi,
-      status: "online",
-      lastUpdate: "Just now",
-    },
-    {
-      id: "sensors",
-      name: "Sensor Node Status",
-      icon: Cpu,
-      status: "online",
-      lastUpdate: "2 min ago",
-    },
-  ];
+type SensorReading = {
+  sensorId: number;
+  status: string;
+  latest: { timestamp: string } | null;
+};
 
-  const getStatusBadge = (status: string) => {
+function formatRelative(iso: string | null): string {
+  if (!iso) return "no data yet";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0) return "just now";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+export function SystemStatus() {
+  const [items, setItems] = useState<StatusItem[]>([
+    { id: "gateway", name: "Gateway Connection", icon: Wifi, status: "offline", lastUpdate: "—" },
+    { id: "sensors", name: "Sensor Node Status", icon: Cpu, status: "offline", lastUpdate: "—" },
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function refresh() {
+      try {
+        const token =
+          typeof window !== "undefined" ? localStorage.getItem("token") : null;
+        const res = await fetch("/api/dashboard", {
+          cache: "no-store",
+          credentials: "include",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) throw new Error("dashboard fetch failed");
+        const data = await res.json();
+
+        const readings: SensorReading[] = data.sensorReadings ?? [];
+        const latestTs =
+          readings
+            .map((r) => r.latest?.timestamp)
+            .filter((t): t is string => !!t)
+            .sort()
+            .reverse()[0] ?? null;
+
+        // Sensor node = at least one sensor row whose status != offline AND a
+        // recent telemetry (< 30s) ⇒ live; 30s–5min ⇒ warning; older ⇒ offline.
+        const ageMs = latestTs ? Date.now() - new Date(latestTs).getTime() : Infinity;
+        const sensorStatus: Status =
+          ageMs < 30_000 ? "online" : ageMs < 5 * 60_000 ? "warning" : "offline";
+
+        // Gateway = backend-reachable + at least one telemetry ever ⇒ online.
+        const gatewayStatus: Status = latestTs ? "online" : "warning";
+
+        if (!cancelled) {
+          setItems([
+            {
+              id: "gateway",
+              name: "Gateway Connection",
+              icon: Wifi,
+              status: gatewayStatus,
+              lastUpdate: latestTs ? formatRelative(latestTs) : "no data yet",
+            },
+            {
+              id: "sensors",
+              name: "Sensor Node Status",
+              icon: Cpu,
+              status: sensorStatus,
+              lastUpdate: formatRelative(latestTs),
+            },
+          ]);
+        }
+      } catch {
+        if (!cancelled) {
+          setItems((prev) =>
+            prev.map((i) => ({ ...i, status: "offline", lastUpdate: "unreachable" })),
+          );
+        }
+      }
+    }
+
+    refresh();
+    const t = setInterval(refresh, 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
+  const getStatusBadge = (status: Status) => {
     switch (status) {
       case "online":
         return (
@@ -60,7 +139,7 @@ export function SystemStatus() {
       </h3>
 
       <div className="space-y-3">
-        {statusItems.map((item) => {
+        {items.map((item) => {
           const Icon = item.icon;
           return (
             <div

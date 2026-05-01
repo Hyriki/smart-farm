@@ -15,8 +15,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy gateway code
 COPY gateway/mqtt_bridge.py ./
 
-# Copy .env file (will be mounted or passed at runtime)
-COPY gateway/.env* ./
-
-# Run the gateway
+# Run the gateway (env vars are supplied via docker-compose, not a baked-in .env)
 CMD ["python3", "mqtt_bridge.py"]
