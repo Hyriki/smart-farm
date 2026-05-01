@@ -1,310 +1,373 @@
-# Yolo Farm
+# YOLO Farm — Smart-Farm IoT Dashboard
 
-A modern full-stack web application built with [Next.js](https://nextjs.org), [Prisma ORM](https://www.prisma.io), and [PostgreSQL](https://www.postgresql.org).
+End-to-end IoT system for monitoring a small greenhouse: an **ESP32** publishes
+sensor readings to an **MQTT broker**, a **Next.js** backend persists telemetry
+to **PostgreSQL** and pushes live data to the dashboard via **Server-Sent
+Events**, and the operator can toggle a **heater** and a **buzzer** from the UI
+which travels back through MQTT to the firmware.
 
-## Overview
+---
 
-This project is a production-ready application featuring:
+## 1. System architecture
 
-- **Next.js 16** – Modern React framework with server-side rendering and API routes
-- **Prisma ORM** – Type-safe database access and migrations
-- **PostgreSQL Database** – Hosted on [Supabase](https://supabase.com)
-- **Docker & Docker Compose** – Containerized deployment for consistency across environments
-- **TypeScript** – End-to-end type safety
-
-## Prerequisites
-
-- [Docker](https://www.docker.com/products/docker-desktop) and Docker Compose
-- [Node.js](https://nodejs.org) 20+ (for local development)
-
-## Getting Started
-
-### Running the Complete MQTT System
-
-This project integrates IoT sensors via MQTT. Here's how to set up and run the entire system:
-
-#### Prerequisites for MQTT
-
-- ESP32 with code uploaded (see `firmware/esp32_sensor.ino`)
-- MQTT Broker running (Mosquitto)
-- Python 3.11+ with pip
-
-#### Step 1: Start MQTT Broker
-
-**Using Docker:**
-```bash
-docker run -d -p 1883:1883 --name mosquitto eclipse-mosquitto
+```
+┌──────────┐        MQTT publish         ┌─────────────┐
+│  ESP32   │ ─── yolofarm/sensor/all ──► │  Mosquitto  │
+│ firmware │                              │   broker    │
+│          │ ◄── yolofarm/control/heater ─┤   :1883     │
+│          │ ◄── yolofarm/control/buzzer ─┤             │
+└──────────┘                              └──────┬──────┘
+   sensor reads                                  │
+   (every ~2 s)                                  │ subscribe
+                                                 ▼
+                                       ┌──────────────────────┐
+                                       │  Next.js backend     │
+                                       │  (Node 20 +          │
+                                       │  src/lib/mqtt/*)     │
+                                       │                      │
+                                       │  • Telemetry → DB    │
+                                       │  • Notification → DB │
+                                       │  • In-memory cache   │
+                                       │  • SSE pub-sub       │
+                                       └──┬─────────┬─────────┘
+                              REST: /api/...      SSE: /api/dashboard/stream
+                                       │             │
+                                       ▼             ▼
+                                ┌─────────────────────────┐
+                                │  Next.js dashboard      │
+                                │  (React 19 + recharts)  │
+                                └─────────────────────────┘
+                                       │            ▲
+                                       │ POST       │ EventSource
+                                       │ /api/      │
+                                       │ actuators/ │
+                                       │ {id}/      │
+                                       │ toggle     │
+                                       ▼            │
+                                  user click ───────┘
 ```
 
-**Or with Homebrew (macOS):**
-```bash
-brew install mosquitto
-mosquitto -d -p 1883
+**Live-update flow**: the moment Mosquitto delivers `yolofarm/sensor/all` to
+the backend, `processSensorData` writes a Telemetry row, updates an in-memory
+cache (`_latestSensorSnapshot`), and broadcasts the snapshot to every connected
+SSE client — so gauges and charts update within ~50 ms of the ESP32 publishing.
+
+**Reload flow**: the SSE endpoint replays the cached last snapshot on connect,
+so a hard refresh sees real values immediately, before the next ESP32 message.
+
+**Control flow**: the toggle button POSTs to `/api/actuators/{id}/toggle`
+which (a) updates `Actuator.currentState` (or `mode` for the buzzer) in the DB,
+(b) publishes `ON`/`OFF`/`AUTO` to the matching control topic, (c) returns the
+backend-confirmed state. The button's UI updates from the *response*, not from
+the click — so the button never lies about hardware state.
+
+---
+
+## 2. Tech stack
+
+| Layer | Tech |
+|---|---|
+| Firmware | C++ on ESP32 (PlatformIO, Arduino framework, FreeRTOS, PubSubClient, DHT, BH1750) |
+| Broker | Mosquitto 2.x |
+| Backend | Next.js 16 (App Router), Node 20, mqtt 5, Prisma 7, `@prisma/adapter-pg` |
+| Database | PostgreSQL on Supabase |
+| Frontend | React 19, Tailwind v4, recharts, lucide-react |
+| Auth | JWT in HttpOnly cookie |
+
+---
+
+## 3. Folder structure
+
+```
+smart-farm/
+├── docker-compose.yml          # mqtt + gateway + app
+├── Dockerfile                  # Next.js production image
+├── Dockerfile.gateway          # passive MQTT logger
+├── README.md                   # ← you are here
+├── prisma/
+│   ├── schema.prisma           # User, Sensor, Telemetry, Actuator, Notification…
+│   ├── migrations/             # 4 migrations
+│   └── seed.ts                 # idempotent seed (sensor #1, heater, buzzer)
+├── prisma.config.ts            # Prisma 7 config (with seed command)
+├── firmware/
+│   ├── platformio.ini          # ESP32 board: nodemcu-32s
+│   ├── include/
+│   │   ├── config.h            # WiFi / broker IP / port
+│   │   └── config.h.example    # template
+│   └── src/main.cpp            # FreeRTOS sensor + mqtt tasks
+├── gateway/
+│   ├── mqtt_bridge.py          # passive logger (no external services)
+│   └── requirements.txt
+└── src/                        # Next.js source
+    ├── app/
+    │   ├── api/
+    │   │   ├── auth/login/                   POST  – set token cookie
+    │   │   ├── dashboard/                    GET   – aggregate snapshot for first paint
+    │   │   ├── dashboard/stream/             GET   – SSE live updates
+    │   │   ├── actuators/[id]/toggle/        POST  – DB update + MQTT publish
+    │   │   ├── actuators/runtime/            GET   – buzzer real state
+    │   │   └── notifications/                GET   – active threshold notifications
+    │   ├── dashboard/page.tsx               main UI
+    │   ├── login/page.tsx
+    │   └── signup/page.tsx
+    ├── lib/
+    │   ├── mqtt/
+    │   │   ├── client.ts        broker connect, publishMqtt
+    │   │   ├── init.ts          one-shot global init (instrumentation.ts)
+    │   │   └── sensorDataHandler.ts   subscribe → DB → in-memory cache → SSE pub-sub
+    │   ├── auth.ts              cookie/bearer extraction, requireAuth
+    │   ├── prisma.ts            shared PrismaClient
+    │   └── …
+    ├── components/             CircularGauge, DataVisualization, SystemStatus, TopNav…
+    ├── db/                     Prisma controllers + models
+    └── instrumentation.ts      registers MQTT init on Node startup
 ```
 
-#### Step 2: Upload Code to ESP32
+---
 
-1. Open Arduino IDE
-2. Load `firmware/esp32_sensor.ino`
-3. **Configure credentials in code:**
-   - `WIFI_SSID` → Your WiFi network name
-   - `WIFI_PASSWORD` → Your WiFi password
-   - `MQTT_BROKER` → Your MQTT broker IP (e.g., local network IP)
-4. Install libraries: PubSubClient, DHT sensor library, BH1750
-5. Select **Board** → ESP32 Dev Module
-6. Select **Port** → Your ESP32's COM port
-7. Click **Upload**
-8. Verify in Serial Monitor that ESP32 connects to WiFi & MQTT
+## 4. Hardware
 
-#### Step 3: Run Python Gateway (Optional)
+| Item | Notes |
+|---|---|
+| ESP32 NodeMCU-32S | or any ESP32 dev board with the same pinout |
+| DHT11 | temperature + humidity |
+| BH1750 | ambient light sensor (I²C) |
+| Capacitive soil moisture sensor | analog |
+| 5 V relay module | switches a heating lamp / fan |
+| Active buzzer 5 V | wet-soil alarm |
+| Wires, breadboard, 5 V supply for the relay coil | |
 
-The gateway is a passive MQTT logger — useful for tailing all `yolofarm/*`
-traffic in one terminal. No external services are involved.
+### Pin mapping (`firmware/src/main.cpp`)
 
-```bash
-cd gateway/
-pip3 install -r requirements.txt
+| Pin | Role | Notes |
+|---:|---|---|
+| GPIO 5  | DHT data | one-wire |
+| GPIO 21 | I²C SDA  | shared with BH1750 |
+| GPIO 22 | I²C SCL  | shared with BH1750 |
+| GPIO 36 | Soil moisture analog (`SOIL_MOISTURE_PIN`) | ADC1_CH0, input-only |
+| GPIO 18 | Buzzer (`BUZZER_PIN`) | output |
+| GPIO 23 | Heater relay (`HEATER_PIN`) | output |
+
+> Do not change these without also updating `main.cpp` — the project's seed,
+> backend, and dashboard assume them.
+
+---
+
+## 5. MQTT topics
+
+| Direction | Topic | Payload | Producer | Consumer |
+|---|---|---|---|---|
+| Telemetry | `yolofarm/sensor/all` | `{humidity, temperature, light, soil_moisture, mode, buzzer, heater}` (JSON) | ESP32 | backend |
+| Echo (debug) | `yolofarm/sensor/1/processed` | `{...,buzzerMode,buzzerState,telemetryId,timestamp,status}` | backend | optional logger |
+| Heater command | `yolofarm/control/heater` | `"ON"` \| `"OFF"` (raw string) | backend | ESP32 |
+| Buzzer mode | `yolofarm/control/buzzer` | `"AUTO"` \| `"OFF"` \| `"ON"` (raw string) | backend | ESP32 |
+
+The firmware retains its own buzzer threshold logic (AUTO mode triggers when
+soil < `soil_threshold_low`). Backend just forwards the user's mode choice.
+
+---
+
+## 6. Environment variables
+
+`.env` at the project root (committed-style template, real secrets in your local file):
+
+```env
+DATABASE_URL="postgresql://...:6543/postgres?pgbouncer=true"
+DIRECT_URL="postgresql://...:5432/postgres"
+JWT_SECRET="long-random-string"
+
+GMAIL_USER="..."
+GMAIL_APP_PASSWORD="..."
+
+MQTT_BROKER_URL="mqtt://localhost:1883"
+MQTT_MOCK_MODE="false"             # set "true" only for offline UI dev
 ```
 
-Create `gateway/.env`:
+`firmware/include/config.h` (gitignored — copy from `config.h.example`):
+
+```cpp
+#define WIFI_SSID     "your-ssid"
+#define WIFI_PASSWORD "your-pass"
+#define MQTT_BROKER   "192.168.1.14"   // your laptop's LAN IPv4 (run `ipconfig`)
+#define MQTT_PORT     1883
+```
+
+`gateway/.env` (optional, only if you run the passive logger):
+
 ```env
 MQTT_BROKER=localhost
 MQTT_PORT=1883
 ```
 
-Then run:
+---
+
+## 7. Setup
+
+### 7.1 First-time install
+
 ```bash
-python3 mqtt_bridge.py
+git clone <this-repo>
+cd smart-farm
+npm install                     # installs Prisma 7, Next 16, mqtt 5, recharts…
+npx prisma generate
+npx prisma migrate deploy       # applies all migrations
+npx prisma db seed              # creates sensor #1, heater, buzzer (idempotent)
 ```
 
-#### Step 4: Run Backend Server
+### 7.2 Start the broker
+
+**Native Mosquitto on Windows** (recommended for dev — already a Windows
+service after `winget install EclipseFoundation.Mosquitto`):
+
+```powershell
+sc query mosquitto              # should show "RUNNING"
+# tail traffic in another terminal:
+& "C:\Program Files\Mosquitto\mosquitto_sub.exe" -h 192.168.1.14 -p 1883 -t "yolofarm/#" -v
+```
+
+**Or with Docker** (use this if you don't want a system service):
 
 ```bash
-npm install mqtt
-npm run dev
+docker compose up -d mqtt
 ```
 
-Check logs for:
+Don't run both at once — they'll fight for port 1883.
+
+### 7.3 Start the backend + frontend
+
+The Next.js app runs both. Pick the LAN IP that matches `MQTT_BROKER_URL`:
+
+```bash
+npm run dev                      # http://localhost:3000
 ```
+
+Watch the log; you should see, in order:
+```
+[MQTT] Initializing...
 ✓ MQTT connected
 ✓ Subscribed to yolofarm/sensor/all
+[SensorHandler] Subscribed to sensor data
+✓ Ready in xxxms
 ```
 
-#### Step 5: Test the System
-
-**Test Heater Control (toggles current state, requires auth token):**
-```bash
-curl -X POST http://localhost:3000/api/actuators/<HEATER_ID>/toggle \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <JWT>" \
-  -d '{}'
-```
-
-**Test Buzzer Mode (toggles AUTO ↔ OFF):**
-```bash
-curl -X POST http://localhost:3000/api/actuators/<BUZZER_ID>/toggle \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <JWT>" \
-  -d '{}'
-```
-
-**Watch broker traffic from a terminal:**
-```bash
-mosquitto_sub -h localhost -p 1883 -t "yolofarm/#" -v
-```
-
-**View Sensor Data in Database:**
-```bash
-npx prisma studio
-```
-
-#### System Architecture
-
-```
-ESP32 firmware
-   │  publish  yolofarm/sensor/all          (humidity, temperature,
-   │                                         light, soil_moisture,
-   │                                         mode, buzzer, heater)
-   ▼
-MQTT Broker (Mosquitto, MQTT_BROKER_URL)
-   │
-   ├─► Next.js backend (instrumentation.ts → src/lib/mqtt)
-   │      • saves Telemetry rows to Postgres
-   │      • upserts threshold-violation Notifications
-   │      • mirrors firmware-reported buzzer/heater into Actuator.currentState
-   │
-   ├─► Python gateway (optional passive logger)
-   │
-   └─► Frontend dashboard polls REST:
-          /api/dashboard          ← stats, latest readings, trends, actuators
-          /api/actuators/runtime  ← buzzer real-state badge
-          /api/notifications      ← alert bell
-       Toggle buttons:
-          POST /api/actuators/{id}/toggle
-            → DB update + MQTT publish:
-                yolofarm/control/heater  "ON" | "OFF"
-                yolofarm/control/buzzer  "AUTO" | "OFF"   (mode only)
-```
-
-#### Environment Variables
-
-**Backend (`.env`):**
-```env
-DATABASE_URL=postgresql://[user]:[password]@[host]/[database]
-DIRECT_URL=postgresql://[user]:[password]@[host]/[database]
-JWT_SECRET=...
-GMAIL_USER=...
-GMAIL_APP_PASSWORD=...
-MQTT_BROKER_URL=mqtt://[your-mqtt-broker-ip]:1883
-MQTT_MOCK_MODE=false   # set to "true" only for offline UI dev (synthetic data)
-```
-
-**Gateway (`gateway/.env`, optional):**
-```env
-MQTT_BROKER=[your-mqtt-broker-ip]
-MQTT_PORT=1883
-```
-
-#### Troubleshooting MQTT
-
-| Issue | Solution |
-|-------|----------|
-| Port 1883 already in use | `docker stop mosquitto` or use different port |
-| ESP32 won't connect to WiFi | Check SSID/password in `firmware/esp32_sensor.ino` |
-| MQTT broker not found | Verify MQTT_BROKER_URL is correct in `.env.local` |
-| Python SSL error | Run: `python3 -m pip install --upgrade certifi` |
-
-### Using Docker (Recommended)
-
-The easiest way to run the complete MQTT system with all services is using Docker Compose:
-
-#### Start All Services
+### 7.4 Build & flash the ESP32
 
 ```bash
-docker-compose up --build
+cd firmware
+pio run                          # build only
+pio run -t upload                # flash over USB
+pio device monitor -b 115200     # serial monitor (Ctrl+C to exit)
 ```
 
-This will start:
-1. **MQTT Broker** (Mosquitto) on port 1883
-2. **Python Gateway** (passive MQTT logger; no external services)
-3. **Next.js Backend** on [http://localhost:3000](http://localhost:3000)
-
-#### Verify Services
-
-```bash
-# Check all containers
-docker-compose ps
-
-# View logs
-docker-compose logs -f
-
-# View specific service logs
-docker-compose logs -f app        # Backend
-docker-compose logs -f mqtt       # MQTT Broker
-docker-compose logs -f gateway    # Python Gateway
+You should see:
+```
+Connecting to <WIFI_SSID>...
+WiFi connected
+IP address: 192.168.1.x
+Attempting MQTT connection... connected
+Subscribed: buzzer + heater control topics
+Published JSON: {"humidity":67.30, ...}
 ```
 
-#### Stop Services
+---
 
-```bash
-docker-compose down
-```
+## 8. End-to-end test
 
-### Local Development
-
-For development without Docker:
-
-```bash
-npm install
-npm run dev
-```
-
-The application will start on [http://localhost:3000](http://localhost:3000) and hot-reload as you make changes.
-
-## Project Structure
-
-```
-firmware/
-├── esp32_sensor.ino          # ESP32 sensor code (Arduino)
-gateway/
-├── mqtt_bridge.py            # Python gateway for Adafruit IO
-src/
-├── app/                      # Next.js pages and layouts
-├── lib/
-│   └── mqtt/                 # MQTT integration
-│       ├── client.ts         # MQTT connection client
-│       ├── init.ts           # MQTT initialization
-│       └── sensorDataHandler.ts  # Sensor data processing
-├── db/                       # Database repositories
-└── generated/                # Auto-generated Prisma client
-prisma/
-├── schema.prisma             # Database schema
-└── migrations/               # Database migrations
-```
-
-## Key Commands
-
-```bash
-# Development
-npm run dev       # Start development server
-npm run build     # Build for production
-npm start         # Start production server
-npm run lint      # Run ESLint
-
-# Database
-npx prisma studio  # Open Prisma Studio UI
-npx prisma migrate dev --name migration_name  # Create migration
-npx prisma migrate deploy  # Deploy migrations
-
-# Docker (Complete System)
-docker-compose up --build      # Build & start all services (MQTT, Gateway, Backend)
-docker-compose up              # Start with cached images
-docker-compose down            # Stop and remove containers
-docker-compose ps              # Show running containers
-docker-compose logs -f         # View all logs
-docker-compose logs -f app     # View backend logs
-docker-compose logs -f mqtt    # View MQTT broker logs
-docker-compose logs -f gateway # View Python gateway logs
-
-# MQTT Testing
-mosquitto_sub -h localhost -p 1883 -t "yolofarm/#"  # Subscribe to all topics
-mosquitto_pub -h localhost -p 1883 -t "test" -m "hello"  # Publish test message
-```
-
-## Database
-
-This project uses PostgreSQL hosted on [Supabase](https://supabase.com). Database operations are managed with [Prisma ORM](https://www.prisma.io).
-
-To update the schema:
-
-1. Modify `prisma/schema.prisma`
-2. Create and apply migrations:
+1. **Broker reachability** from PC:
    ```bash
-   npx prisma migrate dev --create-only
-   npx prisma migrate deploy
+   mosquitto_pub -h 192.168.1.14 -p 1883 -t yolofarm/test -m hello
+   mosquitto_sub -h 192.168.1.14 -p 1883 -t yolofarm/test -C 1
    ```
+2. **Backend ingest**: open `pio device monitor` and the dashboard side by
+   side. Every ESP32 publish (`Published JSON: ...`) should be followed in
+   the backend log with `[SensorHandler] ✓ Telemetry saved (id=...)`.
+3. **Live dashboard**: log in → `/dashboard`. Humidity / Temperature /
+   Soil / Light gauges update within ~50 ms of every ESP32 publish.
+   Charts append a point per publish (capped at the last 50).
+4. **Heater control**: click the Heater toggle. Browser network panel
+   shows `POST /api/actuators/3/toggle` → `200 {"actuator":{"currentState":"ON"}}`.
+   Backend log: `📤 Published to yolofarm/control/heater: ON`. Serial monitor:
+   `Heater ON`. Relay clicks. Within ~2 s the next ESP32 publish carries
+   `"heater":"ON"` and the dashboard's *Devices Online* stat ticks up.
+5. **Buzzer mode**: click Buzzer. UI flips OFF↔AUTO. Backend publishes
+   `"AUTO"` / `"OFF"`. ESP32 prints `Buzzer returned to AUTO mode`. Drop a
+   damp cloth off the soil sensor — buzzer fires when value crosses the
+   firmware threshold.
 
-## Deployment
+---
 
-Docker is configured for production deployment. Build and push the image to your container registry:
+## 9. Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| ESP32 serial: `MQTT failed rc=-2`, `errno 104 Connection reset by peer` | Wrong broker IP in `firmware/include/config.h`, or two brokers fighting for port 1883 | Run `ipconfig`, copy the Wi-Fi adapter's IPv4 into `MQTT_BROKER`. Check `netstat -ano | findstr :1883` — should be one PID only. Stop Docker mosquitto if you use the native service: `docker stop mosquitto`. |
+| ESP32 serial: `MQTT failed rc=-4` (timeout) | Broker not running, or firewall blocks 1883 | `sc query mosquitto`. Allow inbound TCP/1883 in Windows Defender Firewall. |
+| Browser console: `Failed to fetch dashboard data (HTTP 401)` | JWT cookie expired (24 h) or never set | Re-login at `/login`. Page now self-heals on 401 by redirecting to `/login`. |
+| Browser console: `Failed to fetch dashboard data (HTTP 500)` | Supabase pooler timed out / connection limit hit | Reload — the route now degrades gracefully and returns safe defaults instead of 500. If it persists, check Supabase status, or switch `DATABASE_URL` from `:6543?pgbouncer=true` to `:5432` (direct). |
+| Dashboard charts stuck at one value | SSE didn't connect (CORS, devtools blocking, broken proxy) | Open devtools → Network → filter EventStream. You should see `/api/dashboard/stream` with status `200` and a flowing list of `snapshot` events. |
+| Dashboard buttons "jump" between ON/OFF | (Already fixed.) Was caused by SSE overwriting the user's toggle. UI now treats the toggle response as authoritative for heater / buzzer mode. |
+| Rapid double-click toggles backend twice | (Already fixed.) Each card has a `useRef` synchronous in-flight guard; a second click is rejected before the first request finishes. |
+| Heater relay clicks but lamp does not light | Relay is rated for the right voltage but lamp is plugged into a dead socket / open switch / blown bulb / wrong NC vs NO terminal | Test with a multimeter on the relay output. Most relay modules switch through `COM`+`NO`; wire the lamp through those. Check the bulb separately. |
+| `npx prisma db seed` says "No seed command configured" | Prisma 7 reads `prisma.config.ts#migrations.seed`, ignoring the legacy `package.json#prisma.seed` | Already configured. Run again. |
+| Wrong API URL after deploy | Frontend uses **relative** URLs (`/api/...`) — same-origin only | If you deploy backend and frontend on different domains, set `NEXT_PUBLIC_API_URL` and prepend it in `apiClient.ts` (currently relative, fine for same-origin Next.js). |
+| Serial port `pio` can't find ESP32 | USB driver missing, wrong COM, board in bootloader | Install Silicon Labs CP210x VCP driver. Hold BOOT, tap EN. `pio device list` to confirm port. |
+| Dashboard real-time but stats stuck | Stats refresh every 30 s via the slow `/api/dashboard` cycle | That's by design — SSE is for live values, REST is for aggregates. Wait one cycle. |
+
+---
+
+## 10. Development workflow
+
+- **Backend changes**: Turbopack hot-reloads on save. The MQTT subscriber and
+  in-memory cache survive HMR thanks to `globalThis._mqttClientInstance` and
+  `globalThis._latestSensorSnapshot`. If you ever see "MQTT not connected"
+  warnings, restart `npm run dev`.
+- **Schema changes**: edit `prisma/schema.prisma` →
+  `npx prisma migrate dev --name <slug>` (creates + applies migration) →
+  `npx prisma generate` (Prisma will do this for you).
+- **Firmware changes**: edit `firmware/src/main.cpp` →
+  `pio run -t upload` → `pio device monitor`. The pin `#define`s at the top
+  of `main.cpp` are load-bearing — see §4.
+- **Type check**: `npx tsc --noEmit` (the unused `src/components/ui/*` Figma
+  shadcn export has pre-existing missing-radix-ui errors; ignore those — they
+  aren't on the dashboard's import path).
+- **Watch broker traffic** while debugging:
+  ```bash
+  mosquitto_sub -h 192.168.1.14 -p 1883 -t "yolofarm/#" -v
+  ```
+
+---
+
+## 11. Debug checklist (when something looks wrong)
+
+1. ☐ `sc query mosquitto` shows `RUNNING`.
+2. ☐ `netstat -ano | findstr :1883` shows exactly **one** LISTEN row.
+3. ☐ `mosquitto_pub`/`mosquitto_sub` round-trip works on `192.168.1.14:1883`.
+4. ☐ ESP32 serial log shows `Attempting MQTT connection... connected` and
+   periodic `Published JSON: {...}` lines.
+5. ☐ Backend log shows `📨 Received from yolofarm/sensor/all` and
+   `[SensorHandler] ✓ Telemetry saved`.
+6. ☐ Browser devtools → Network → EventStream → `/api/dashboard/stream`
+   has status 200 and flowing `snapshot` events.
+7. ☐ Database has fresh rows: `SELECT * FROM "Telemetry" ORDER BY id DESC LIMIT 5;`.
+8. ☐ Dashboard humidity/temp gauges visibly update within ~5 s of the ESP32.
+9. ☐ Toggling heater shows `📤 Published to yolofarm/control/heater: ON|OFF`
+   in backend log and matching action on the relay.
+
+---
+
+## 12. Production / Docker
 
 ```bash
-docker build -t your-registry/yolo-farm:latest .
-docker push your-registry/yolo-farm:latest
+docker compose up --build
+# brings up: mqtt (Mosquitto), gateway (passive logger), app (Next.js)
+# app reaches mqtt at mqtt://mqtt:1883 inside the docker network.
 ```
 
-For deployment on Docker containers or Kubernetes, ensure the following environment variables are set:
+Set `DATABASE_URL` and `JWT_SECRET` in your shell or a `.env` next to
+`docker-compose.yml` before starting.
 
-- `DATABASE_URL` – PostgreSQL connection string
-- `NODE_ENV=production`
-
-## Documentation
-
-- [Next.js Documentation](https://nextjs.org/docs)
-- [Prisma Documentation](https://www.prisma.io/docs)
-- [Supabase Documentation](https://supabase.com/docs)
-- [Docker Documentation](https://docs.docker.com)
+---
 
 ## License
 
-Proprietary – All rights reserved.
+Proprietary — All rights reserved.

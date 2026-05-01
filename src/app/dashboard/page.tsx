@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useNotifications, mapApiNotification } from "@/lib/notifications";
+
+function formatHHMMSS(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
 import { TopNav } from "@/components/TopNav";
 import { CircularGauge } from "@/components/CircularGauge";
 import { DataVisualization } from "@/components/DataVisualization";
@@ -227,13 +233,41 @@ export default function DashboardPage() {
             heaterState: "ON" | "OFF";
             lastUpdated: string | null;
           };
+
+          // Live gauges
           if (snap.humidity !== null) setCurrentHumidity(snap.humidity);
           if (snap.temperature !== null) setCurrentTemperature(snap.temperature);
           if (snap.soil_moisture !== null) setCurrentSoilMoisture(snap.soil_moisture);
           if (snap.light !== null) setCurrentLightIntensity(snap.light);
+
+          // Buzzer real state — firmware-reported, refresh from SSE.
+          // NOTE: heaterState and buzzerMode are user-toggled (DB authoritative).
+          // We deliberately do NOT update them from SSE — the toggle response
+          // is the source of truth; SSE updates would race with user clicks
+          // and cause the button to "jump".
           setBuzzerRealState(snap.buzzerState);
-          setBuzzerMode(snap.buzzerMode);
-          setHeaterState(snap.heaterState);
+
+          // Append chart points (cap last 50). Use lastUpdated for the x-axis
+          // so points stay in chronological order across reloads.
+          if (snap.lastUpdated) {
+            const time = formatHHMMSS(snap.lastUpdated);
+            const append = (
+              setter: React.Dispatch<React.SetStateAction<TrendPoint[]>>,
+              value: number | null,
+            ) => {
+              if (value === null) return;
+              setter((prev) => {
+                const last = prev[prev.length - 1];
+                // Skip if the same timestamp arrived twice.
+                if (last && last.time === time) return prev;
+                const next = [...prev, { time, value }];
+                return next.length > 50 ? next.slice(next.length - 50) : next;
+              });
+            };
+            append(setLightTrend, snap.light);
+            append(setTemperatureTrend, snap.temperature);
+            append(setMoistureTrend, snap.soil_moisture);
+          }
         } catch (err) {
           console.error("[SSE] failed to parse snapshot", err);
         }
@@ -455,10 +489,14 @@ function HeaterCard({
   onToggle: (state: "ON" | "OFF") => void;
 }) {
   const [isToggling, setIsToggling] = useState(false);
+  const inFlightRef = useRef(false); // synchronous double-click guard
   const isActive = state === "ON";
 
   const handleToggle = async () => {
-    if (actuatorId === null || isToggling) return;
+    // Synchronous reject — useState is async so a fast double-click would
+    // otherwise pass two requests through before the disabled prop applied.
+    if (actuatorId === null || inFlightRef.current) return;
+    inFlightRef.current = true;
     setIsToggling(true);
     try {
       const token =
@@ -477,6 +515,7 @@ function HeaterCard({
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && data.actuator) {
+        // Backend-confirmed state — never trust a click-only optimistic update.
         onToggle(data.actuator.currentState === "ON" ? "ON" : "OFF");
         if (data.warning) console.warn("[HeaterCard] MQTT skipped:", data.warning);
       } else {
@@ -485,6 +524,7 @@ function HeaterCard({
     } catch (err) {
       console.error("[HeaterCard] Toggle error:", err);
     } finally {
+      inFlightRef.current = false;
       setIsToggling(false);
     }
   };
@@ -552,9 +592,11 @@ function BuzzerCard({
 }) {
   const [isToggling, setIsToggling] = useState(false);
   const [toggleError, setToggleError] = useState<string | null>(null);
+  const inFlightRef = useRef(false);
 
   const handleToggle = async () => {
-    if (actuatorId === null || isToggling) return;
+    if (actuatorId === null || inFlightRef.current) return;
+    inFlightRef.current = true;
     setIsToggling(true);
     setToggleError(null);
     try {
@@ -589,6 +631,7 @@ function BuzzerCard({
       console.error("[BuzzerCard] Toggle error:", err);
       setToggleError("Network error");
     } finally {
+      inFlightRef.current = false;
       setIsToggling(false);
     }
   };
