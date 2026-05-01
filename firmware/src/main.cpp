@@ -101,8 +101,14 @@ void callback(char* topic, byte* payload, unsigned int length) {
       buzzerEnabled = true;
       Serial.println("Buzzer returned to AUTO mode");
     }
+    else if (message == "ON") {
+      // Forced ON override (backend-driven). Leaves AUTO mode untouched so the
+      // local threshold task continues to manage it on the next tick.
+      setBuzzerState(true);
+      Serial.println("Buzzer forced ON");
+    }
     else {
-      Serial.println("Unknown buzzer command. Use AUTO or OFF");
+      Serial.println("Unknown buzzer command. Use AUTO, OFF, or ON");
     }
   }
   else if (topicStr == HEATER_CONTROL_TOPIC) {

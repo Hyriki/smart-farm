@@ -18,8 +18,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+    networks:
+      - mqtt-network
 
-  # Python Gateway (Adafruit IO Bridge)
+  # Python Gateway — passive MQTT logger (optional). Useful for tailing the
+  # broker traffic without running a separate mosquitto_sub. No external
+  # services (Adafruit IO, etc.) are involved.
   gateway:
     build:
       context: .
@@ -29,13 +33,9 @@ services:
       mqtt:
         condition: service_healthy
     environment:
-      AIO_USERNAME: ${AIO_USERNAME}
-      AIO_KEY: ${AIO_KEY}
       MQTT_BROKER: mqtt
       MQTT_PORT: 1883
     restart: unless-stopped
-    env_file:
-      - gateway/.env
     networks:
       - mqtt-network
 
@@ -50,6 +50,7 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       NODE_ENV: production
       MQTT_BROKER_URL: mqtt://mqtt:1883
+      MQTT_MOCK_MODE: "false"
     ports:
       - "3000:3000"
     restart: unless-stopped

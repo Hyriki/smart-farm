@@ -58,32 +58,18 @@ mosquitto -d -p 1883
 
 #### Step 3: Run Python Gateway (Optional)
 
-For remote monitoring via Adafruit IO:
+The gateway is a passive MQTT logger — useful for tailing all `yolofarm/*`
+traffic in one terminal. No external services are involved.
 
 ```bash
 cd gateway/
-pip3 install paho-mqtt adafruit-io python-dotenv
+pip3 install -r requirements.txt
 ```
 
 Create `gateway/.env`:
 ```env
-AIO_USERNAME=[your-adafruit-username]
-AIO_KEY=[your-adafruit-api-key]
-MQTT_BROKER=[your-mqtt-broker-ip]
+MQTT_BROKER=localhost
 MQTT_PORT=1883
-```
-
-**Update `gateway/mqtt_bridge.py`** to read from `.env`:
-```python
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
-
-AIO_USERNAME = os.getenv('AIO_USERNAME')
-AIO_KEY = os.getenv('AIO_KEY')
-MQTT_BROKER = os.getenv('MQTT_BROKER', '192.168.1.95')
-MQTT_PORT = int(os.getenv('MQTT_PORT', '1883'))
 ```
 
 Then run:
@@ -106,18 +92,25 @@ Check logs for:
 
 #### Step 5: Test the System
 
-**Test Buzzer Control:**
+**Test Heater Control (toggles current state, requires auth token):**
 ```bash
-curl -X POST http://localhost:3000/api/control/buzzer \
+curl -X POST http://localhost:3000/api/actuators/<HEATER_ID>/toggle \
   -H "Content-Type: application/json" \
-  -d '{"command": "AUTO"}'
+  -H "Authorization: Bearer <JWT>" \
+  -d '{}'
 ```
 
-**Test Heater Control:**
+**Test Buzzer Mode (toggles AUTO ↔ OFF):**
 ```bash
-curl -X POST http://localhost:3000/api/control/heater \
+curl -X POST http://localhost:3000/api/actuators/<BUZZER_ID>/toggle \
   -H "Content-Type: application/json" \
-  -d '{"command": "ON"}'
+  -H "Authorization: Bearer <JWT>" \
+  -d '{}'
+```
+
+**Watch broker traffic from a terminal:**
+```bash
+mosquitto_sub -h localhost -p 1883 -t "yolofarm/#" -v
 ```
 
 **View Sensor Data in Database:**
@@ -128,32 +121,46 @@ npx prisma studio
 #### System Architecture
 
 ```
-ESP32 Sensor
-    ↓ MQTT Publish (yolofarm/sensor/all)
-MQTT Broker (MQTT_BROKER_IP:MQTT_PORT)
-    ├─→ Backend Node.js (Save to DB)
-    ├─→ Python Gateway (Bridge to Adafruit IO)
-    └─→ Dashboard UI (Real-time display)
+ESP32 firmware
+   │  publish  yolofarm/sensor/all          (humidity, temperature,
+   │                                         light, soil_moisture,
+   │                                         mode, buzzer, heater)
+   ▼
+MQTT Broker (Mosquitto, MQTT_BROKER_URL)
+   │
+   ├─► Next.js backend (instrumentation.ts → src/lib/mqtt)
+   │      • saves Telemetry rows to Postgres
+   │      • upserts threshold-violation Notifications
+   │      • mirrors firmware-reported buzzer/heater into Actuator.currentState
+   │
+   ├─► Python gateway (optional passive logger)
+   │
+   └─► Frontend dashboard polls REST:
+          /api/dashboard          ← stats, latest readings, trends, actuators
+          /api/actuators/runtime  ← buzzer real-state badge
+          /api/notifications      ← alert bell
+       Toggle buttons:
+          POST /api/actuators/{id}/toggle
+            → DB update + MQTT publish:
+                yolofarm/control/heater  "ON" | "OFF"
+                yolofarm/control/buzzer  "AUTO" | "OFF"   (mode only)
 ```
 
 #### Environment Variables
 
-**Backend (.env.local):**
+**Backend (`.env`):**
 ```env
-# MQTT Configuration
-MQTT_BROKER_URL=mqtt://[your-mqtt-broker-ip]:1883
-
-# Database Configuration
 DATABASE_URL=postgresql://[user]:[password]@[host]/[database]
+DIRECT_URL=postgresql://[user]:[password]@[host]/[database]
+JWT_SECRET=...
+GMAIL_USER=...
+GMAIL_APP_PASSWORD=...
+MQTT_BROKER_URL=mqtt://[your-mqtt-broker-ip]:1883
+MQTT_MOCK_MODE=false   # set to "true" only for offline UI dev (synthetic data)
 ```
 
-**Gateway (gateway/.env):**
+**Gateway (`gateway/.env`, optional):**
 ```env
-# Adafruit IO Configuration
-AIO_USERNAME=[your-adafruit-username]
-AIO_KEY=[your-adafruit-api-key]
-
-# MQTT Broker Configuration
 MQTT_BROKER=[your-mqtt-broker-ip]
 MQTT_PORT=1883
 ```
@@ -179,7 +186,7 @@ docker-compose up --build
 
 This will start:
 1. **MQTT Broker** (Mosquitto) on port 1883
-2. **Python Gateway** (connects to Adafruit IO)
+2. **Python Gateway** (passive MQTT logger; no external services)
 3. **Next.js Backend** on [http://localhost:3000](http://localhost:3000)
 
 #### Verify Services

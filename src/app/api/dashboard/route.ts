@@ -1,13 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
-import { ok, serverError, unauthorized } from "@/lib/api";
+import { ok, unauthorized } from "@/lib/api";
+import { getLatestSensorSnapshot } from "@/lib/mqtt/sensorDataHandler";
 
-type BoundingBox = {
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-};
+// Always run on every request; never get statically optimized by Turbopack/Next.
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+export const revalidate = 0;
 
 function formatTime(date: Date): string {
   const h = String(date.getHours()).padStart(2, "0");
@@ -16,31 +15,58 @@ function formatTime(date: Date): string {
   return `${h}:${m}:${s}`;
 }
 
-function parseBoundingBox(value: unknown): BoundingBox {
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    return value as BoundingBox;
-  }
-  return { x: 0, y: 0, width: 0, height: 0 };
-}
-
-function mapDetectionStatus(role: string) {
-  const lower = role.toLowerCase();
-  if (
-    lower.includes("disease") ||
-    lower.includes("pest") ||
-    lower.includes("alert") ||
-    lower.includes("warning")
-  ) {
-    return "disease";
-  }
-  return "healthy";
-}
+type TrendPoint = { time: string; value: number };
+type Trends = { light: TrendPoint[]; temperature: TrendPoint[]; moisture: TrendPoint[] };
+const EMPTY_TRENDS: Trends = { light: [], temperature: [], moisture: [] };
+const EMPTY_STATS = {
+  sensors: 0,
+  activeSensors: 0,
+  actuators: 0,
+  devicesOnline: 0,
+  telemetries: 0,
+  alerts: 0,
+};
 
 export async function GET(request: Request) {
   try {
     requireAuth(request);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "unauthorized";
+    return unauthorized(msg);
+  }
 
-    // ── Core queries — guaranteed to work with the original schema ──────────────
+  // Always populate `current` from the in-memory cache first — page reload sees
+  // last known values within a microsecond, no DB hop.
+  const snap = getLatestSensorSnapshot();
+  const current = {
+    humidity: snap.humidity,
+    temperature: snap.temperature,
+    soilMoisture: snap.soil_moisture,
+    lightIntensity: snap.light,
+  };
+  const lastUpdated = snap.lastUpdated;
+
+  // Heavy bits — wrapped per-section so a single failing query degrades to
+  // a sane default instead of a 500. Reload never returns "Failed to fetch".
+  let stats = EMPTY_STATS;
+  let trends: Trends = EMPTY_TRENDS;
+  let actuators: Array<{
+    id: number;
+    role: string;
+    currentState: string;
+    mode: string | null;
+    updatedAt: Date;
+  }> = [];
+  let activeNotifications: unknown[] = [];
+  let sensorReadings: Array<{
+    sensorId: number;
+    sensorType: string;
+    location: string | null;
+    status: string;
+    latest: { timestamp: Date } | null;
+  }> = [];
+
+  try {
     const [
       sensorCount,
       activeSensorCount,
@@ -48,86 +74,51 @@ export async function GET(request: Request) {
       devicesOnline,
       telemetryCount,
       alertCount,
-      frameCount,
       latestTelemetries,
       recentTelemetries,
-      latestFrame,
     ] = await Promise.all([
       prisma.sensor.count(),
-
       prisma.sensor.count({ where: { status: "online" } }),
-
       prisma.actuator.count(),
-
       prisma.actuator.count({ where: { currentState: { not: "OFF" } } }),
-
       prisma.telemetry.count(),
       prisma.alert.count(),
-      prisma.frame.count(),
-
       prisma.sensor.findMany({
-        include: {
-          telemetries: { orderBy: { timestamp: "desc" }, take: 1 },
+        select: {
+          id: true,
+          type: true,
+          location: true,
+          status: true,
+          telemetries: {
+            orderBy: { timestamp: "desc" },
+            take: 1,
+            select: { timestamp: true },
+          },
         },
         orderBy: { id: "asc" },
       }),
-
       prisma.telemetry.findMany({
         orderBy: { timestamp: "desc" },
         take: 12,
-      }),
-
-      prisma.frame.findFirst({
-        orderBy: { timestamp: "desc" },
-        include: { detections: true },
+        select: {
+          timestamp: true,
+          lightIntensity: true,
+          ambientTemperature: true,
+          soilMoisture: true,
+        },
       }),
     ]);
 
-    // ── Resilient queries — need migration to work; fall back gracefully ────────
-    // Using `any` cast because the generated Prisma client is stale until
-    // `prisma migrate dev` regenerates it with the new mode column + Notification model.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pc = prisma as any;
+    stats = {
+      sensors: sensorCount,
+      activeSensors: activeSensorCount,
+      actuators: actuatorCount,
+      devicesOnline,
+      telemetries: telemetryCount,
+      alerts: alertCount,
+    };
 
-    // Actuators with mode field (buzzer only). Uses raw SQL to bypass generated-client
-    // validation (which rejects unknown fields even with `any` cast). Falls back to
-    // mode: null if the mode column doesn't exist yet (migration not run).
-    let actuators: Array<{
-      id: number;
-      role: string;
-      currentState: string;
-      mode: string | null;
-      updatedAt: Date;
-    }>;
-    try {
-      actuators = await prisma.$queryRaw`
-        SELECT "id", "role", "currentState", "mode", "updatedAt"
-        FROM   "Actuator"
-        ORDER  BY "id" ASC
-      `;
-    } catch {
-      const rows = await prisma.actuator.findMany({
-        select: { id: true, role: true, currentState: true, updatedAt: true },
-        orderBy: { id: "asc" },
-      });
-      actuators = rows.map((r) => ({ ...r, mode: null }));
-    }
-
-    // Active notifications. Returns [] if the Notification table doesn't exist yet.
-    const activeNotifications: unknown[] = pc.notification
-      ? await pc.notification
-          .findMany({
-            where: { isResolved: false },
-            orderBy: { updatedAt: "desc" },
-          })
-          .catch((err: unknown) => {
-            console.error("[DASHBOARD] notification query failed:", err);
-            return [];
-          })
-      : [];
-
-    // ── Assemble response ───────────────────────────────────────────────────────
-    const sensorReadings = latestTelemetries.map((sensor) => ({
+    sensorReadings = latestTelemetries.map((sensor) => ({
       sensorId: sensor.id,
       sensorType: sensor.type,
       location: sensor.location,
@@ -135,75 +126,66 @@ export async function GET(request: Request) {
       latest: sensor.telemetries[0] ?? null,
     }));
 
-    const latestTelemetry = recentTelemetries.length > 0 ? recentTelemetries[0] : null;
-    const orderedTelemetries = [...recentTelemetries].reverse();
-
-    const detections =
-      latestFrame?.detections.map((detection) => {
-        const bbox = parseBoundingBox(detection.boundingBox);
-        return {
-          label: detection.role,
-          confidence: Math.round((detection.confidenceScore ?? 0) * 100),
-          status: mapDetectionStatus(detection.role),
-          bbox: {
-            x: bbox.x ?? 0,
-            y: bbox.y ?? 0,
-            width: bbox.width ?? 0,
-            height: bbox.height ?? 0,
-          },
-        };
-      }) ?? [];
-
-    return ok({
-      message: "Dashboard data fetched successfully",
-
-      current: {
-        humidity: latestTelemetry?.humidity ?? null,
-        temperature: latestTelemetry?.ambientTemperature ?? null,
-        soilMoisture: latestTelemetry?.soilMoisture ?? null,
-        lightIntensity: latestTelemetry?.lightIntensity ?? null,
-      },
-
-      trends: {
-        light: orderedTelemetries.map((item) => ({
-          time: formatTime(item.timestamp),
-          value: item.lightIntensity ?? 0,
-        })),
-        temperature: orderedTelemetries.map((item) => ({
-          time: formatTime(item.timestamp),
-          value: item.ambientTemperature ?? 0,
-        })),
-        moisture: orderedTelemetries.map((item) => ({
-          time: formatTime(item.timestamp),
-          value: item.soilMoisture ?? 0,
-        })),
-      },
-
-      ai: { imageUrl: "", detections },
-
-      stats: {
-        sensors: sensorCount,
-        activeSensors: activeSensorCount,
-        actuators: actuatorCount,
-        devicesOnline,
-        telemetries: telemetryCount,
-        alerts: alertCount,
-        frames: frameCount,
-        plantsMonitored: null,
-        healthScore: null,
-      },
-
-      sensorReadings,
-      actuators,
-      notifications: activeNotifications,
-    });
-  } catch (error) {
-    console.error("[DASHBOARD_ROUTE_ERROR]", error);
-
-    const message = error instanceof Error ? error.message : "Internal server error";
-    if (message.toLowerCase().includes("token")) {
-      return unauthorized(message);
-    }
-    return serverError(error);
+    const ordered = [...recentTelemetries].reverse();
+    trends = {
+      light: ordered.map((t) => ({
+        time: formatTime(t.timestamp),
+        value: t.lightIntensity ?? 0,
+      })),
+      temperature: ordered.map((t) => ({
+        time: formatTime(t.timestamp),
+        value: t.ambientTemperature ?? 0,
+      })),
+      moisture: ordered.map((t) => ({
+        time: formatTime(t.timestamp),
+        value: t.soilMoisture ?? 0,
+      })),
+    };
+  } catch (err) {
+    console.error("[DASHBOARD] stats/trends query failed — serving cached/defaults:", err);
   }
+
+  try {
+    actuators = await prisma.$queryRaw`
+      SELECT "id", "role", "currentState", "mode", "updatedAt"
+      FROM   "Actuator"
+      ORDER  BY "id" ASC
+    `;
+  } catch (err) {
+    console.error("[DASHBOARD] actuators query failed:", err);
+    try {
+      const rows = await prisma.actuator.findMany({
+        select: { id: true, role: true, currentState: true, updatedAt: true },
+        orderBy: { id: "asc" },
+      });
+      actuators = rows.map((r) => ({ ...r, mode: null }));
+    } catch {
+      actuators = [];
+    }
+  }
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pc = prisma as any;
+    if (pc.notification) {
+      activeNotifications = await pc.notification.findMany({
+        where: { isResolved: false },
+        orderBy: { updatedAt: "desc" },
+      });
+    }
+  } catch (err) {
+    console.error("[DASHBOARD] notifications query failed:", err);
+    activeNotifications = [];
+  }
+
+  return ok({
+    message: "Dashboard data fetched successfully",
+    current,
+    lastUpdated,
+    trends,
+    stats,
+    sensorReadings,
+    actuators,
+    notifications: activeNotifications,
+  });
 }
